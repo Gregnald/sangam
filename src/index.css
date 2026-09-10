@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme {
+  --color-rail-dark: #1e293b;
+  --color-rail-light: #f8fafc;
+  --color-rail-accent: #0284c7;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900;
+  }
+}
