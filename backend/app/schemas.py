@@ -247,6 +247,22 @@ class ScheduleAssignment(BaseModel):
     severity_code: str | None = None
     requested_by: str | None = None
     plan_status: str | None = None
+    plan_period_label: str | None = None
+    asset_id: str | None = None
+    source_system: str | None = None
+    estimated_block_hours: float | None = None
+    due_date: date | None = None
+    priority_score: float | None = None
+    speed_restriction_kmph: int | None = None
+
+
+class ScheduleTraversal(BaseModel):
+    model_config = CamelModel
+    train_number: str
+    train_name: str | None = None
+    direction: str
+    depart_min: int
+    arrive_min: int
 
 
 class SchedulePendingRequest(BaseModel):
@@ -280,6 +296,7 @@ class CorridorSchedule(BaseModel):
     assignments: list[ScheduleAssignment]
     pending_requests: list[SchedulePendingRequest]
     goods_forecasts: list[GoodsForecastBand] = []
+    traversals: list[ScheduleTraversal] = []
 
 
 class PlanDepartmentKpi(BaseModel):
@@ -299,6 +316,7 @@ class PlanKpis(BaseModel):
     horizon_end: date
     days: int
     corridors_in_zone: int
+    weekly_plans_included: int
     availability_pct: float
     availability_pct_unbundled: float
     affected_corridors: int

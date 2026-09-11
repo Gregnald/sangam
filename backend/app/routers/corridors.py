@@ -18,6 +18,7 @@ from app.schemas import (
     NetworkGeoJSON,
     ScheduleAssignment,
     SchedulePendingRequest,
+    ScheduleTraversal,
     CorridorBlockWindow,
     ZoneSummary,
 )
@@ -212,7 +213,9 @@ def corridor_schedule(
         text(
             f"""
             SELECT a.assignment_id, a.defect_id, a.department, a.allocated_start, a.allocated_end, a.joint_block_group_id,
-                   d.defect_type, d.severity_code, d.requested_by, p.status AS plan_status
+                   d.defect_type, d.severity_code, d.requested_by, d.asset_id, d.source_system, d.estimated_block_hours,
+                   d.due_date, d.priority_score, d.speed_restriction_kmph,
+                   p.status AS plan_status, p.period_label AS plan_period_label
             FROM plan.block_assignments a
             JOIN plan.block_plans p ON p.plan_id = a.plan_id
             LEFT JOIN core.defects d ON d.defect_id = a.defect_id
@@ -263,10 +266,24 @@ def corridor_schedule(
             )
         )
 
+    # The timetabled trains through this corridor — the reason the free
+    # windows have gaps in them. Same every day (the timetable repeats), so
+    # one list serves every row of the Gantt.
+    traversal_rows = db.execute(
+        text(
+            """
+            SELECT train_number, train_name, direction, depart_min, arrive_min
+            FROM core.corridor_traversals WHERE corridor_id = :c ORDER BY depart_min
+            """
+        ),
+        {"c": corridor_id},
+    ).mappings().all()
+
     return CorridorSchedule(
         corridor_id=corridor_id,
         windows=[CorridorBlockWindow.model_validate(r) for r in clip_window_rows([dict(r) for r in window_rows], bands)],
         assignments=[ScheduleAssignment.model_validate(dict(r)) for r in assignment_rows],
         pending_requests=[SchedulePendingRequest.model_validate(dict(r)) for r in pending_rows],
         goods_forecasts=goods,
+        traversals=[ScheduleTraversal.model_validate(dict(r)) for r in traversal_rows],
     )

@@ -63,6 +63,11 @@ export function PlanKpiPanel({ planId, refreshKey }: { planId: string; refreshKe
           Asset availability · {kpis.periodLabel} · {kpis.zone} · {kpis.days} days
         </p>
         <p className="text-[10px] text-ops-muted">
+          {kpis.weeklyPlansIncluded > 0 && (
+            <span className="mr-3">
+              includes {kpis.weeklyPlansIncluded} approved weekly plan{kpis.weeklyPlansIncluded === 1 ? "" : "s"} inside this month
+            </span>
+          )}
           {kpis.affectedCorridors} of {kpis.corridorsInZone} corridors under possession at some point
         </p>
       </div>

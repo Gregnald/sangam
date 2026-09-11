@@ -32,18 +32,55 @@ def compute_plan_kpis(conn, plan_id: str) -> dict:
     h_end: date = plan["horizon_end"]
     days = (h_end - h_start).days + 1
 
-    assignments = conn.execute(
-        text(
-            """
-            SELECT a.assignment_id, a.window_id, a.corridor_id, a.defect_id, a.department, a.allocated_start, a.allocated_end,
-                   a.joint_block_group_id, d.severity_code, d.due_date, d.speed_restriction_kmph, d.estimated_block_hours
-            FROM plan.block_assignments a
-            LEFT JOIN core.defects d ON d.defect_id = a.defect_id
-            WHERE a.plan_id = :id
-            """
-        ),
-        {"id": plan_id},
-    ).mappings().all()
+    # The schedule a monthly plan actually stands for is not just its own
+    # rows: once a week inside the month has its own approved weekly plan,
+    # that weekly plan is the live, authoritative schedule for those days
+    # (the Plans tab shows it in place of the monthly copy, and the monthly
+    # solve froze around it). So a monthly plan's KPIs cover its own rows on
+    # days no approved weekly plan owns, plus every approved weekly plan's
+    # rows inside the horizon — otherwise a month whose work all landed in
+    # approved weeklies would report 100% availability and zero blocks
+    # while its Gantt is visibly full.
+    columns = """a.assignment_id, a.window_id, a.corridor_id, a.defect_id, a.department, a.allocated_start, a.allocated_end,
+                   a.joint_block_group_id, d.severity_code, d.due_date, d.speed_restriction_kmph, d.estimated_block_hours"""
+    weekly_plans_included = 0
+    if plan["horizon_type"] == "monthly":
+        assignments = conn.execute(
+            text(
+                f"""
+                SELECT {columns}, a.plan_id
+                FROM plan.block_assignments a
+                LEFT JOIN core.defects d ON d.defect_id = a.defect_id
+                WHERE a.plan_id = :id
+                  AND NOT EXISTS (
+                        SELECT 1 FROM plan.block_plans w
+                        WHERE w.status = 'approved' AND w.horizon_type = 'weekly' AND w.zone IS NOT DISTINCT FROM :zone
+                          AND a.allocated_start::date BETWEEN w.horizon_start AND w.horizon_end
+                  )
+                UNION ALL
+                SELECT {columns}, a.plan_id
+                FROM plan.block_assignments a
+                JOIN plan.block_plans w ON w.plan_id = a.plan_id
+                LEFT JOIN core.defects d ON d.defect_id = a.defect_id
+                WHERE w.status = 'approved' AND w.horizon_type = 'weekly' AND w.zone IS NOT DISTINCT FROM :zone
+                  AND a.allocated_start::date BETWEEN :hs AND :he
+                """
+            ),
+            {"id": plan_id, "zone": zone, "hs": h_start, "he": h_end},
+        ).mappings().all()
+        weekly_plans_included = len({str(a["plan_id"]) for a in assignments if str(a["plan_id"]) != str(plan_id)})
+    else:
+        assignments = conn.execute(
+            text(
+                f"""
+                SELECT {columns}, a.plan_id
+                FROM plan.block_assignments a
+                LEFT JOIN core.defects d ON d.defect_id = a.defect_id
+                WHERE a.plan_id = :id
+                """
+            ),
+            {"id": plan_id},
+        ).mappings().all()
 
     corridor_count = conn.execute(text("SELECT count(*) FROM core.corridors WHERE zone = :z"), {"z": zone}).scalar() or 0
 
@@ -179,6 +216,7 @@ def compute_plan_kpis(conn, plan_id: str) -> dict:
         "horizon_end": h_end,
         "days": days,
         "corridors_in_zone": int(corridor_count),
+        "weekly_plans_included": weekly_plans_included,
         # availability
         "availability_pct": round(availability_pct, 3),
         "availability_pct_unbundled": round(availability_pct_unbundled, 3),

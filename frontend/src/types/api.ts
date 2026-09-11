@@ -158,6 +158,21 @@ export interface ScheduleAssignment {
   severityCode: string | null;
   requestedBy: string | null;
   planStatus: string | null;
+  planPeriodLabel: string | null;
+  assetId: string | null;
+  sourceSystem: string | null;
+  estimatedBlockHours: number | null;
+  dueDate: string | null;
+  priorityScore: number | null;
+  speedRestrictionKmph: number | null;
+}
+
+export interface ScheduleTraversal {
+  trainNumber: string;
+  trainName: string | null;
+  direction: string;
+  departMin: number;
+  arriveMin: number;
 }
 
 export interface SchedulePendingRequest {
@@ -188,6 +203,7 @@ export interface CorridorSchedule {
   assignments: ScheduleAssignment[];
   pendingRequests: SchedulePendingRequest[];
   goodsForecasts: GoodsForecastBand[];
+  traversals: ScheduleTraversal[];
 }
 
 export interface PlanDepartmentKpi {
@@ -205,6 +221,7 @@ export interface PlanKpis {
   horizonEnd: string;
   days: number;
   corridorsInZone: number;
+  weeklyPlansIncluded: number;
   availabilityPct: number;
   availabilityPctUnbundled: number;
   affectedCorridors: number;

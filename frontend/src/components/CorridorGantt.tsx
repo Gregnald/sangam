@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import { api, qs } from "../lib/api";
-import type { CorridorSchedule } from "../types/api";
+import type { CorridorSchedule, ScheduleAssignment } from "../types/api";
 
 const DEPT_COLOR: Record<string, string> = { ENGG: "#2563eb", SIGNAL: "#9333ea", TRD: "#ea580c" };
+const DEPT_LABEL: Record<string, string> = { ENGG: "Engineering", SIGNAL: "Signal & Telecom", TRD: "Traction Distribution" };
+const SOURCE_LABEL: Record<string, string> = { TMS: "TMS (Track Management)", SMMS: "SMMS (Signalling)", TDMS: "TDMS (Traction Distribution)" };
+// Timetabled trains: the reason a free window has gaps in it. Drawn as a
+// bright tick the full height of the row so even a 9-minute passage is
+// visible and hoverable.
+const TRAIN_COLOR = "#22d3ee";
 
 // Requested blocks are hatched rather than just a different solid colour:
 // TRD's orange and any "requested" amber sit close enough on screen that a
@@ -27,6 +33,24 @@ function fmtTime(iso: string): string {
 function widthPct(startIso: string, endIso: string): number {
   const mins = (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000;
   return Math.max((mins / 1440) * 100, 0.6);
+}
+function fmtMin(min: number): string {
+  const m = ((min % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+function fmtDue(iso: string | null): string {
+  return iso ? new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—";
+}
+
+function assignmentTitle(a: ScheduleAssignment, isProposed: boolean): string {
+  const lines = [
+    `${DEPT_LABEL[a.department] ?? a.department} (${a.department}) — ${(a.defectType ?? "").replace(/_/g, " ")}`,
+    `Block: ${fmtTime(a.allocatedStart)}–${fmtTime(a.allocatedEnd)}${a.estimatedBlockHours != null ? ` (${a.estimatedBlockHours.toFixed(2)} h)` : ""}`,
+    `Severity ${a.severityCode ?? "?"}${a.speedRestrictionKmph != null ? ` · speed restriction ${a.speedRestrictionKmph} km/h in force` : ""} · due ${fmtDue(a.dueDate)}${a.priorityScore != null ? ` · priority ${a.priorityScore.toFixed(0)}/100` : ""}`,
+    `Asset: ${a.assetId ?? "—"} · source: ${a.sourceSystem ? SOURCE_LABEL[a.sourceSystem] ?? a.sourceSystem : "—"}`,
+    `Requested by: ${a.requestedBy ?? "—"}${a.planPeriodLabel ? ` · plan ${a.planPeriodLabel}` : ""}${isProposed ? " · PROPOSED (not yet approved)" : " · approved"}`,
+  ];
+  return lines.join("\n");
 }
 
 export function CorridorGantt({
@@ -77,7 +101,12 @@ export function CorridorGantt({
     <div className="border border-ops-border">
       <div className="flex items-center gap-3 px-3 py-1.5 border-b border-ops-border text-[10px] text-ops-muted">
         <span className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 inline-block" style={{ background: "#2563eb" }} /> Allocated
+          Allocated:
+          {Object.entries(DEPT_COLOR).map(([dept, color]) => (
+            <span key={dept} className="flex items-center gap-1 ml-1">
+              <span className="w-2.5 h-2.5 inline-block" style={{ background: color }} /> {dept}
+            </span>
+          ))}
         </span>
         {planId && (
           <span className="flex items-center gap-1">
@@ -90,6 +119,11 @@ export function CorridorGantt({
         <span className="flex items-center gap-1">
           <span className="w-2.5 h-2.5 bg-white/10 border border-ops-border inline-block" /> Free window
         </span>
+        {data.traversals.length > 0 && (
+          <span className="flex items-center gap-1">
+            <span className="w-0.5 h-2.5 inline-block" style={{ background: TRAIN_COLOR }} /> Timetabled train ({data.traversals.length}/day)
+          </span>
+        )}
         {data.goodsForecasts.length > 0 && (
           <span className="flex items-center gap-1">
             <span className="w-2.5 h-2.5 inline-block" style={{ background: GOODS_HATCH }} /> Goods forecast (COA)
@@ -125,6 +159,15 @@ export function CorridorGantt({
                     title={`Free window ${fmtTime(w.windowStart)}–${fmtTime(w.windowEnd)} (max ${w.maxConcurrentDepts} depts)`}
                   />
                 ))}
+                {dayWindows.length > 0 &&
+                  data.traversals.map((t) => (
+                    <div
+                      key={`${t.trainNumber}-${t.departMin}`}
+                      className="absolute top-0 h-full opacity-80"
+                      style={{ left: `${(t.departMin / 1440) * 100}%`, width: `${Math.max(((t.arriveMin - t.departMin) / 1440) * 100, 0.25)}%`, background: TRAIN_COLOR }}
+                      title={`Train ${t.trainNumber}${t.trainName ? ` ${t.trainName}` : ""} (${t.direction.toUpperCase()}) on this section ${fmtMin(t.departMin)}–${fmtMin(t.arriveMin)} — no block possible`}
+                    />
+                  ))}
                 {dayAssignments.map((a) => {
                   const isHighlight =
                     isHighlightDay && highlightWindowStart && Math.abs(new Date(a.allocatedStart).getTime() - new Date(highlightWindowStart).getTime()) < 60000;
@@ -134,7 +177,7 @@ export function CorridorGantt({
                       key={a.assignmentId}
                       className={`absolute top-0.5 h-5 ${isHighlight ? "ring-2 ring-amber-400" : ""} ${isProposed ? "border border-dashed border-white/60 opacity-60" : ""}`}
                       style={{ left: `${(minuteOfDay(a.allocatedStart) / 1440) * 100}%`, width: `${widthPct(a.allocatedStart, a.allocatedEnd)}%`, background: DEPT_COLOR[a.department] ?? "#2563eb" }}
-                      title={`${a.department} · ${(a.defectType ?? "").replace(/_/g, " ")} · ${fmtTime(a.allocatedStart)}–${fmtTime(a.allocatedEnd)}${a.requestedBy ? ` · requested by ${a.requestedBy}` : ""}${isProposed ? " · PROPOSED (not yet approved)" : ""}`}
+                      title={assignmentTitle(a, Boolean(isProposed))}
                     />
                   );
                 })}

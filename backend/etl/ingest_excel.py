@@ -19,6 +19,10 @@ logger = logging.getLogger("sangam.etl.ingest_excel")
 IST = timezone(timedelta(hours=5, minutes=30))
 
 DEPARTMENT_TO_SOURCE = {"ENGG": "TMS", "SIGNAL": "SMMS", "TRD": "TDMS"}
+# A backlog export is the department's request even when the controller is
+# the one clicking Upload — the requester on record is the department's
+# account, the same as if they had submitted it from their own dashboard.
+DEPARTMENT_ACCOUNT = {"ENGG": "engg_dept", "SIGNAL": "snt_dept", "TRD": "trd_dept"}
 RAW_TABLE = {"TMS": "raw.defects_tms", "SMMS": "raw.defects_smms", "TDMS": "raw.defects_tdms"}
 
 BACKLOG_REQUIRED_COLUMNS = ["corridor_id", "defect_type", "severity_code", "detected_date", "due_date", "estimated_block_hours"]
@@ -115,7 +119,7 @@ def ingest_backlog(department: str, rows: list[dict], requested_by: str) -> dict
                     # placement path in the workflow engine.
                     "requested_window_start": _to_datetime_str(row.get("requested_window_start")),
                     "requested_window_end": _to_datetime_str(row.get("requested_window_end")),
-                    "requested_by": requested_by,
+                    "requested_by": DEPARTMENT_ACCOUNT.get(department, requested_by),
                 }
                 if bool(payload["requested_window_start"]) != bool(payload["requested_window_end"]):
                     raise ValueError("requested_window_start and requested_window_end must be given together")
