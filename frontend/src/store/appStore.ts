@@ -18,7 +18,6 @@ interface AppState {
   modifications: ModificationRequest[];
   plans: BlockPlan[];
   activeAssignments: BlockAssignment[];
-  mapRefreshKey: number;
   isLoading: boolean;
 
   fetchZones: () => Promise<void>;
@@ -28,7 +27,6 @@ interface AppState {
   fetchModifications: () => Promise<void>;
   fetchPlans: () => Promise<void>;
   fetchActiveWeeklyAssignments: () => Promise<void>;
-  bumpMapRefresh: () => void;
 
   submitRequest: (body: {
     corridorId: string;
@@ -63,10 +61,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   modifications: [],
   plans: [],
   activeAssignments: [],
-  mapRefreshKey: 0,
   isLoading: false,
 
-  bumpMapRefresh: () => set({ mapRefreshKey: get().mapRefreshKey + 1 }),
 
   fetchZones: async () => {
     const zones = await api.get<ZoneSummary[]>("/api/v1/zones");
@@ -127,7 +123,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   decideModification: async (requestId, approve, reason) => {
     await api.post(`/api/v1/modifications/${requestId}/decide`, { approve, reason });
     await Promise.all([get().fetchModifications(), get().fetchPlans(), get().fetchActiveWeeklyAssignments(), get().fetchRequests()]);
-    get().bumpMapRefresh();
   },
 
   markNotificationRead: async (id) => {
@@ -160,7 +155,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   approvePlan: async (planId) => {
     await api.post(`/api/v1/plans/${planId}/approve`);
     await Promise.all([get().fetchPlans(), get().fetchActiveWeeklyAssignments(), get().fetchRequests()]);
-    get().bumpMapRefresh();
   },
 
   rejectPlan: async (planId, reason) => {
@@ -171,14 +165,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   generateAndApproveAllMonthly: async (monthsAhead = 1) => {
     const results = await api.post<BulkPlanResult[]>("/api/v1/plans/monthly/generate-approve-all", { monthsAhead });
     await Promise.all([get().fetchPlans(), get().fetchActiveWeeklyAssignments(), get().fetchRequests()]);
-    get().bumpMapRefresh();
     return results;
   },
 
   generateAndApproveAllWeekly: async () => {
     const results = await api.post<BulkPlanResult[]>("/api/v1/plans/weekly/generate-approve-all", {});
     await Promise.all([get().fetchPlans(), get().fetchActiveWeeklyAssignments(), get().fetchRequests()]);
-    get().bumpMapRefresh();
     return results;
   },
 }));

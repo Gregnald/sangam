@@ -48,7 +48,7 @@ export function SnapshotGantt({ rows, rangeStart, rangeEnd }: { rows: SnapshotRo
               <span className="w-24 shrink-0 text-[10px] text-ops-muted mono">
                 {new Date(day + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
               </span>
-              <div className="relative flex-1 h-6 bg-black/20">
+              <div className="relative flex-1 h-6 bg-ops-inset">
                 {dayRows.map((r, i) => (
                   <div
                     key={i}

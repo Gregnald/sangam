@@ -59,7 +59,7 @@ def score() -> int:
                            speed_restriction_kmph, estimated_block_hours, defect_type,
                            corridor_id, department, defer_count
                     FROM core.defects
-                    WHERE workflow_status != 'cleared'
+                    WHERE workflow_status NOT IN ('cleared', 'completed')
                     """
                 )
             ).mappings().all()

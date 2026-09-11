@@ -258,3 +258,25 @@ CREATE TABLE IF NOT EXISTS core.goods_train_forecasts (
     UNIQUE (corridor_id, forecast_date, band_start_min, band_end_min)
 );
 CREATE INDEX IF NOT EXISTS idx_goods_forecast_corridor_date ON core.goods_train_forecasts (corridor_id, forecast_date);
+
+-- =========================================================================
+-- Backlog event log — every status transition a request goes through
+-- =========================================================================
+-- core.defects only carries the *current* workflow_status; this is the
+-- trail behind it: submitted / ingested, scheduled by which plan, reschedule
+-- offered / accepted / rejected, bumped, released by a superseding plan,
+-- completed by the clock, lapsed offers, cleared. Feeds the Backlog history
+-- tab and each request's "last event" line.
+
+CREATE TABLE IF NOT EXISTS core.defect_events (
+    event_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    defect_id       UUID NOT NULL REFERENCES core.defects(defect_id) ON DELETE CASCADE,
+    event_type      TEXT NOT NULL,
+    from_status     TEXT,
+    to_status       TEXT,
+    actor           TEXT,
+    details         TEXT,
+    occurred_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_defect_events_defect ON core.defect_events (defect_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_defect_events_time ON core.defect_events (occurred_at DESC);

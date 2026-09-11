@@ -5,8 +5,8 @@ import { CorridorGantt } from "./CorridorGantt";
 export function WeeklyPlanView({ zone, weekStart, weekEnd, planId }: { zone: string | null; weekStart: string; weekEnd: string; planId?: string | null }) {
   const [corridorId, setCorridorId] = useState<string | null>(null);
   return (
-    <div className="p-3 space-y-2 bg-black/10">
-      <CorridorPicker zone={zone} value={corridorId} onChange={setCorridorId} />
+    <div className="p-3 space-y-2 bg-ops-inset">
+      <CorridorPicker zone={zone} value={corridorId} onChange={setCorridorId} lockZone />
       {corridorId ? (
         <CorridorGantt corridorId={corridorId} rangeStart={weekStart} rangeEnd={weekEnd} planId={planId} />
       ) : (

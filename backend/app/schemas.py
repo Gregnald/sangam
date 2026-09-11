@@ -63,6 +63,50 @@ class DefectRequest(BaseModel):
     workflow_status: str
     priority_score: float | None = None
     priority_explanation: list[PriorityFactor] | None = None
+    updated_at: datetime | None = None
+    # Live block (from an approved plan), if the request is scheduled.
+    allocated_start: datetime | None = None
+    allocated_end: datetime | None = None
+    plan_id: uuid.UUID | None = None
+    plan_period_label: str | None = None
+    joint_block_group_id: uuid.UUID | None = None
+    # Everyone sharing that possession (incl. this department) and how many jobs it holds.
+    group_departments: list[str] | None = None
+    group_size: int | None = None
+    # Derived from the clock: pending past its due date; scheduled block
+    # upcoming / in progress / completed.
+    is_overdue: bool = False
+    execution_state: Literal["upcoming", "in_progress", "completed"] | None = None
+    last_event_type: str | None = None
+    last_event_at: datetime | None = None
+    last_event_details: str | None = None
+    last_event_actor: str | None = None
+
+
+class DefectEvent(BaseModel):
+    model_config = CamelModel
+    event_id: uuid.UUID
+    defect_id: uuid.UUID
+    event_type: str
+    from_status: str | None = None
+    to_status: str | None = None
+    actor: str | None = None
+    details: str | None = None
+    occurred_at: datetime
+    department: str
+    corridor_id: str | None = None
+    zone: str | None = None
+    defect_type: str
+    severity_code: str
+
+
+class ModelVersion(BaseModel):
+    model_config = CamelModel
+    version_id: uuid.UUID
+    trained_at: datetime
+    artifact_path: str
+    metrics: dict[str, Any] | None = None
+    promoted: bool
 
 
 class SubmitRequestBody(BaseModel):
@@ -218,12 +262,6 @@ class ClearCompatibilityOverrideBody(BaseModel):
     window_id: uuid.UUID
     dept_a: str
     dept_b: str
-
-
-class NetworkGeoJSON(BaseModel):
-    model_config = CamelModel
-    type: Literal["FeatureCollection"] = "FeatureCollection"
-    features: list[dict[str, Any]]
 
 
 class Asset(BaseModel):

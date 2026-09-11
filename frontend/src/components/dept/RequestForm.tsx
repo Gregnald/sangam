@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { api, qs } from "../../lib/api";
 import { useAppStore } from "../../store/appStore";
 import { useAuthStore } from "../../store/authStore";
-import type { Asset, Corridor, Department } from "../../types/api";
+import type { Asset, Department } from "../../types/api";
+import { CorridorPicker } from "../CorridorPicker";
 
 const DEFECT_TYPES: Record<Department, string[]> = {
   ENGG: ["rail_fracture_risk", "track_geometry_twist", "weld_defect", "ballast_deficiency", "rail_wear"],
@@ -14,7 +15,6 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
   const role = useAuthStore((s) => s.role) as Department;
   const submitRequest = useAppStore((s) => s.submitRequest);
 
-  const [corridors, setCorridors] = useState<Corridor[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [corridorId, setCorridorId] = useState("");
   const [assetId, setAssetId] = useState("");
@@ -28,10 +28,6 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
   const [result, setResult] = useState<{ outcome: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    api.get<Corridor[]>(`/api/v1/corridors${qs({ zone: zone ?? undefined })}`).then(setCorridors);
-  }, [zone]);
 
   useEffect(() => {
     if (!corridorId) {
@@ -86,7 +82,7 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
 
   if (result) {
     return (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+      <div className="fixed inset-0 bg-ops-panel flex items-center justify-center z-50">
         <div className="bg-ops-panel border border-ops-border p-6 w-full max-w-md">
           <h3 className="text-sm font-semibold text-ops-text mb-2">Request submitted</h3>
           <p className="text-xs text-ops-muted mb-4">{outcomeLabel[result.outcome] ?? result.outcome}</p>
@@ -99,22 +95,15 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-ops-panel flex items-center justify-center z-50">
       <form onSubmit={handleSubmit} className="bg-ops-panel border border-ops-border p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <h3 className="text-sm font-semibold text-ops-text mb-4">New block request — {role}</h3>
 
-        <label className="block text-xs text-ops-muted mb-1">Corridor</label>
-        <select className="w-full mb-3 px-2 py-1.5 bg-black/20 border border-ops-border text-ops-text text-sm" value={corridorId} onChange={(e) => setCorridorId(e.target.value)} required>
-          <option value="">Select corridor…</option>
-          {corridors.map((c) => (
-            <option key={c.corridorId} value={c.corridorId}>
-              {c.lineName} ({c.trainCount} trains/day)
-            </option>
-          ))}
-        </select>
+        <label className="block text-xs text-ops-muted mb-1">Zone → corridor</label>
+        <CorridorPicker zone={zone} value={corridorId || null} onChange={(id) => setCorridorId(id ?? "")} className="mb-3" />
 
         <label className="block text-xs text-ops-muted mb-1">Asset</label>
-        <select className="w-full mb-3 px-2 py-1.5 bg-black/20 border border-ops-border text-ops-text text-sm" value={assetId} onChange={(e) => setAssetId(e.target.value)} required disabled={!corridorId}>
+        <select className="w-full mb-3 px-2 py-1.5 bg-ops-inset border border-ops-border text-ops-text text-sm" value={assetId} onChange={(e) => setAssetId(e.target.value)} required disabled={!corridorId}>
           <option value="">Select asset…</option>
           {assets.map((a) => (
             <option key={a.assetId} value={a.assetId}>
@@ -124,7 +113,7 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
         </select>
 
         <label className="block text-xs text-ops-muted mb-1">Defect / maintenance type</label>
-        <select className="w-full mb-3 px-2 py-1.5 bg-black/20 border border-ops-border text-ops-text text-sm" value={defectType} onChange={(e) => setDefectType(e.target.value)}>
+        <select className="w-full mb-3 px-2 py-1.5 bg-ops-inset border border-ops-border text-ops-text text-sm" value={defectType} onChange={(e) => setDefectType(e.target.value)}>
           {DEFECT_TYPES[role]?.map((t) => (
             <option key={t} value={t}>
               {t.replace(/_/g, " ")}
@@ -150,21 +139,21 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
           </div>
           <div>
             <label className="block text-xs text-ops-muted mb-1">Est. duration (hrs)</label>
-            <input type="number" min={0.5} step={0.5} value={hours} onChange={(e) => setHours(parseFloat(e.target.value))} className="w-full px-2 py-1.5 bg-black/20 border border-ops-border text-ops-text text-sm" />
+            <input type="number" min={0.5} step={0.5} value={hours} onChange={(e) => setHours(parseFloat(e.target.value))} className="w-full px-2 py-1.5 bg-ops-inset border border-ops-border text-ops-text text-sm" />
           </div>
         </div>
 
         <label className="block text-xs text-ops-muted mb-1">Due date</label>
-        <input type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full mb-3 px-2 py-1.5 bg-black/20 border border-ops-border text-ops-text text-sm" />
+        <input type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full mb-3 px-2 py-1.5 bg-ops-inset border border-ops-border text-ops-text text-sm" />
 
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
             <label className="block text-xs text-ops-muted mb-1">Preferred date (optional)</label>
-            <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)} className="w-full px-2 py-1.5 bg-black/20 border border-ops-border text-ops-text text-sm" />
+            <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)} className="w-full px-2 py-1.5 bg-ops-inset border border-ops-border text-ops-text text-sm" />
           </div>
           <div>
             <label className="block text-xs text-ops-muted mb-1">Preferred start (UTC)</label>
-            <input type="time" value={preferredTime} onChange={(e) => setPreferredTime(e.target.value)} className="w-full px-2 py-1.5 bg-black/20 border border-ops-border text-ops-text text-sm" />
+            <input type="time" value={preferredTime} onChange={(e) => setPreferredTime(e.target.value)} className="w-full px-2 py-1.5 bg-ops-inset border border-ops-border text-ops-text text-sm" />
           </div>
         </div>
 

@@ -12,6 +12,7 @@ from app.compatibility import load_compatible_pairs, load_window_overrides
 from app.db import engine
 from app.goods_forecast import clip_windows, load_bands
 from optimizer.model import Job, Window, solve
+from workflow.events import log_events
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("sangam.optimizer.run")
@@ -389,10 +390,15 @@ def approve_plan(plan_id: str, approved_by: str) -> None:
             text("SELECT defect_id FROM plan.block_assignments WHERE plan_id = :id AND defect_id IS NOT NULL"), {"id": plan_id}
         ).scalars().all()
         if scheduled_defect_ids:
+            newly = conn.execute(
+                text("SELECT defect_id FROM core.defects WHERE defect_id = ANY(:ids) AND workflow_status != 'scheduled'"),
+                {"ids": scheduled_defect_ids},
+            ).scalars().all()
             conn.execute(
                 text("UPDATE core.defects SET workflow_status = 'scheduled', updated_at = now() WHERE defect_id = ANY(:ids)"),
                 {"ids": scheduled_defect_ids},
             )
+            log_events(conn, newly, "plan_scheduled", "pending", "scheduled", approved_by, f"placed by approved {plan['horizon_type']} plan {plan['period_label']} ({plan['zone']})")
 
         # Anything the plan(s) we just replaced had scheduled that this one
         # doesn't — and that no other approved plan still holds — is back in
@@ -418,6 +424,7 @@ def approve_plan(plan_id: str, approved_by: str) -> None:
                 {"old_ids": superseded_ids},
             ).scalars().all()
             if released:
+                log_events(conn, released, "released", "scheduled", "pending", approved_by, f"not carried by the re-generated {plan['horizon_type']} plan {plan['period_label']}; deferred")
                 logger.info("plan %s superseded %d plan(s); %d job(s) they held are back in the backlog", plan_id, len(superseded_ids), len(released))
 
         _snapshot(conn, plan_id, plan["horizon_type"], plan["period_label"], "final")

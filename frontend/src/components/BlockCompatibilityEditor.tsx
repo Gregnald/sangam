@@ -58,10 +58,10 @@ export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
     <div className="space-y-3">
       <div className="flex items-center gap-3">
         <CorridorPicker zone={zone} value={corridorId} onChange={setCorridorId} />
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="text-xs bg-black/20 border border-ops-border text-ops-text px-2 py-1" />
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1" />
       </div>
       {corridorId && (
-        <select value={windowId ?? ""} onChange={(e) => setWindowId(e.target.value || null)} className="text-xs bg-black/20 border border-ops-border text-ops-text px-2 py-1 w-full max-w-lg">
+        <select value={windowId ?? ""} onChange={(e) => setWindowId(e.target.value || null)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1 w-full max-w-lg">
           <option value="">{windows.length === 0 ? "No blocks/windows on this corridor for that day" : "Select a block…"}</option>
           {windows.map((w) => (
             <option key={w.windowId} value={w.windowId}>
@@ -73,7 +73,7 @@ export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
       {windowId && (
         <table className="border border-ops-border text-xs w-full max-w-lg">
           <thead>
-            <tr className="bg-black/20 text-ops-muted uppercase text-[10px]">
+            <tr className="bg-ops-inset text-ops-muted uppercase text-[10px]">
               <th className="p-2 text-left">Pair</th>
               <th className="p-2 text-left">Status</th>
               <th className="p-2"></th>

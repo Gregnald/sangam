@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { useAuthStore } from "../store/authStore";
 import { useAppStore } from "../store/appStore";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function TopBar({ tabs, active, onTabChange }: { tabs: string[]; active: string; onTabChange: (t: string) => void }) {
   const { displayName, role, logout } = useAuthStore();
@@ -58,7 +59,7 @@ export function TopBar({ tabs, active, onTabChange }: { tabs: string[]; active: 
                 <div
                   key={n.notificationId}
                   onClick={() => !n.isRead && markNotificationRead(n.notificationId)}
-                  className={`px-3 py-2 text-xs border-b border-ops-border last:border-0 cursor-pointer ${n.isRead ? "text-ops-muted" : "text-ops-text bg-white/5"}`}
+                  className={`px-3 py-2 text-xs border-b border-ops-border last:border-0 cursor-pointer ${n.isRead ? "text-ops-muted" : "text-ops-text bg-ops-raise"}`}
                 >
                   {n.message}
                   <div className="text-[10px] text-ops-muted mt-1">{new Date(n.createdAt).toLocaleString()}</div>
@@ -71,6 +72,7 @@ export function TopBar({ tabs, active, onTabChange }: { tabs: string[]; active: 
           <p className="text-xs font-medium text-ops-text">{displayName}</p>
           <p className="text-[10px] text-ops-muted">{role}</p>
         </div>
+        <ThemeToggle />
         <button onClick={logout} className="text-xs text-ops-muted hover:text-ops-text border border-ops-border px-2 py-1">
           Sign out
         </button>

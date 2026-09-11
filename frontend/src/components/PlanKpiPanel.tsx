@@ -21,7 +21,7 @@ function Ratio({ label, num, den, invert }: { label: string; num: number; den: n
   return (
     <div className="flex items-center gap-2 text-[11px]">
       <span className="w-44 shrink-0 text-ops-muted">{label}</span>
-      <div className="flex-1 h-1.5 bg-black/30 relative">
+      <div className="flex-1 h-1.5 bg-ops-inset-strong relative">
         <div className="absolute inset-y-0 left-0" style={{ width: `${Math.min(pct, 100)}%`, background: good ? "#34d399" : "#fbbf24" }} />
       </div>
       <span className="w-20 text-right mono text-ops-text">
@@ -57,7 +57,7 @@ export function PlanKpiPanel({ planId, refreshKey }: { planId: string; refreshKe
   const totalDeptHours = depts.reduce((s, [, d]) => s + d.hours, 0);
 
   return (
-    <div className="border border-ops-border bg-black/10">
+    <div className="border border-ops-border bg-ops-inset">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-ops-border">
         <p className="text-[10px] uppercase tracking-wide text-ops-muted">
           Asset availability · {kpis.periodLabel} · {kpis.zone} · {kpis.days} days
@@ -133,7 +133,7 @@ export function PlanKpiPanel({ planId, refreshKey }: { planId: string; refreshKe
         <Ratio label="Overdue at start of horizon placed" num={kpis.overdueScheduled} den={kpis.overdueTotal} />
         <div className="flex items-center gap-2 text-[11px]">
           <span className="w-44 shrink-0 text-ops-muted">Possession hours by department</span>
-          <div className="flex-1 h-1.5 bg-black/30 flex overflow-hidden">
+          <div className="flex-1 h-1.5 bg-ops-inset-strong flex overflow-hidden">
             {depts.map(([name, d]) => (
               <div key={name} style={{ width: `${totalDeptHours > 0 ? (d.hours / totalDeptHours) * 100 : 0}%`, background: DEPT_COLOR[name] ?? "#64748b" }} title={`${name}: ${d.hours} h`} />
             ))}

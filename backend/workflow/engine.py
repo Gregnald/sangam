@@ -10,6 +10,7 @@ from app.compatibility import is_compatible
 from app.config import get_settings
 from app.db import engine
 from app.goods_forecast import clip_window_rows, load_bands
+from workflow.events import log_event
 from optimizer.run import week_bounds
 
 logger = logging.getLogger("sangam.workflow.engine")
@@ -56,26 +57,57 @@ def _active_weekly_plan(conn, zone: str, anchor: date | None = None) -> dict | N
     return dict(row) if row else None
 
 
-def _window_usage(conn, plan_id: str, window_id: str) -> tuple[float, set[str]]:
+def _window_usage(conn, plan_id: str, window_id: str) -> tuple[dict[str, float], str | None]:
+    """What already sits in this window of the live plan: hours queued per
+    department (same-department jobs run back to back inside a possession,
+    so they add up) and the possession's joint-block group id, if it has one.
+    Departments run in parallel, so one department's queue never counts
+    against another's."""
     rows = conn.execute(
-        text("SELECT department, allocated_start, allocated_end FROM plan.block_assignments WHERE plan_id = :p AND window_id = :w"),
+        text("SELECT department, allocated_start, allocated_end, joint_block_group_id FROM plan.block_assignments WHERE plan_id = :p AND window_id = :w"),
         {"p": plan_id, "w": window_id},
     ).mappings().all()
-    hours = sum((r["allocated_end"] - r["allocated_start"]).total_seconds() / 3600.0 for r in rows)
-    depts = {r["department"] for r in rows}
-    return hours, depts
+    hours_by_dept: dict[str, float] = {}
+    group_id = None
+    for r in rows:
+        hours_by_dept[r["department"]] = hours_by_dept.get(r["department"], 0.0) + (r["allocated_end"] - r["allocated_start"]).total_seconds() / 3600.0
+        group_id = group_id or (str(r["joint_block_group_id"]) if r["joint_block_group_id"] else None)
+    return hours_by_dept, group_id
 
 
-def _fits(conn, existing_depts: set[str], department: str, existing_hours: float, duration_hours: float, window_capacity_hours: float, max_concurrent: int, window_id: str | None = None) -> bool:
-    if existing_hours + duration_hours > float(window_capacity_hours) + 1e-6:
+def _fits(conn, hours_by_dept: dict[str, float], department: str, duration_hours: float, window_capacity_hours: float, max_concurrent: int, window_id: str | None = None) -> bool:
+    """Same rules as the optimizer: my department's queue (existing + this
+    job) must fit the window; the set of departments present must stay within
+    the window's concurrency cap; every other department present must be
+    allowed to share a possession with mine."""
+    if hours_by_dept.get(department, 0.0) + duration_hours > float(window_capacity_hours) + 1e-6:
         return False
-    combined = existing_depts | {department}
+    combined = set(hours_by_dept) | {department}
     if len(combined) > max_concurrent:
         return False
-    for other in existing_depts:
+    for other in hours_by_dept:
         if other != department and not is_compatible(conn, department, other, window_id=window_id):
             return False
     return True
+
+
+def _join_possession(conn, plan_id: str, window_id: str, group_id: str | None) -> str | None:
+    """Adding a job to a window that already holds work turns that window
+    into a joint block: every job in it shares one group id (the existing
+    one, or a fresh one if the window held a single ungrouped job)."""
+    if group_id:
+        return group_id
+    existing = conn.execute(
+        text("SELECT count(*) FROM plan.block_assignments WHERE plan_id = :p AND window_id = :w"), {"p": plan_id, "w": window_id}
+    ).scalar() or 0
+    if not existing:
+        return None
+    new_group = str(uuid.uuid4())
+    conn.execute(
+        text("UPDATE plan.block_assignments SET joint_block_group_id = :g WHERE plan_id = :p AND window_id = :w"),
+        {"g": new_group, "p": plan_id, "w": window_id},
+    )
+    return new_group
 
 
 def _notify(conn, recipient_role: str, message: str, related_request_id: str | None = None) -> None:
@@ -127,6 +159,7 @@ def submit_request(
         )
 
         zone = conn.execute(text("SELECT zone FROM core.corridors WHERE corridor_id = :c"), {"c": corridor_id}).scalar()
+        log_event(conn, defect_id, "submitted", None, "pending", requested_by, f"{department} · {defect_type} · sev {severity_code} · {estimated_block_hours:.2f} h")
         outcome = _place(conn, defect_id, department, corridor_id, zone, estimated_block_hours, score, requested_window_start, requested_window_end, settings.preemption_margin)
 
     return {"defect_id": defect_id, "outcome": outcome}
@@ -201,28 +234,40 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
         other = []
 
     def _find_fit(candidates: list) -> dict | None:
-        for w in candidates:
+        # Windows that already hold a possession come first: joining an
+        # existing block costs the corridor nothing extra, a fresh window is
+        # a new outage. Among equals, keep the plan's chronological order.
+        def _usage(w):
+            return _window_usage(conn, active_plan["plan_id"], str(w["window_id"]))
+
+        ranked = sorted(candidates, key=lambda w: (0 if _usage(w)[0] else 1, w["window_start"]))
+        for w in ranked:
             if w["duration_hours"] < duration_hours:
                 continue
-            existing_hours, existing_depts = _window_usage(conn, active_plan["plan_id"], str(w["window_id"]))
-            if _fits(conn, existing_depts, department, existing_hours, duration_hours, w["duration_hours"], w["max_concurrent_depts"], window_id=str(w["window_id"])):
+            hours_by_dept, _ = _usage(w)
+            if _fits(conn, hours_by_dept, department, duration_hours, w["duration_hours"], w["max_concurrent_depts"], window_id=str(w["window_id"])):
                 return w
         return None
 
     direct_fit = _find_fit(matching)
     if direct_fit:
-        allocated_start = direct_fit["window_start"]
+        hours_by_dept, group_id = _window_usage(conn, active_plan["plan_id"], str(direct_fit["window_id"]))
+        # Queue behind my own department's jobs already in this possession;
+        # other departments work alongside from the window's start.
+        allocated_start = direct_fit["window_start"] + timedelta(hours=hours_by_dept.get(department, 0.0))
         allocated_end = allocated_start + timedelta(hours=duration_hours)
+        group_id = _join_possession(conn, active_plan["plan_id"], str(direct_fit["window_id"]), group_id)
         conn.execute(
             text(
                 """
-                INSERT INTO plan.block_assignments (plan_id, window_id, corridor_id, defect_id, department, allocated_start, allocated_end)
-                VALUES (:plan, :win, :corridor, :defect, :dept, :start, :end)
+                INSERT INTO plan.block_assignments (plan_id, window_id, corridor_id, defect_id, department, allocated_start, allocated_end, joint_block_group_id)
+                VALUES (:plan, :win, :corridor, :defect, :dept, :start, :end, :group)
                 """
             ),
-            {"plan": active_plan["plan_id"], "win": str(direct_fit["window_id"]), "corridor": corridor_id, "defect": defect_id, "dept": department, "start": allocated_start, "end": allocated_end},
+            {"plan": active_plan["plan_id"], "win": str(direct_fit["window_id"]), "corridor": corridor_id, "defect": defect_id, "dept": department, "start": allocated_start, "end": allocated_end, "group": group_id},
         )
         conn.execute(text("UPDATE core.defects SET workflow_status = 'scheduled', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
+        log_event(conn, defect_id, "scheduled", "pending", "scheduled", "system", f"auto-placed {allocated_start:%Y-%m-%d %H:%M}–{allocated_end:%H:%M} on {corridor_id}" + (" (joined an existing possession)" if group_id else ""))
         return "scheduled"
 
     preemption_target = conn.execute(
@@ -259,6 +304,7 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
         )
         conn.execute(text("UPDATE core.defects SET workflow_status = 'awaiting_controller', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
         _notify(conn, "CONTROLLER", f"{department} submitted a high-priority request that requires bumping an existing scheduled block on {corridor_id}.", request_id)
+        log_event(conn, defect_id, "preemption_requested", "pending", "awaiting_controller", "system", f"asks to bump {preemption_target['department']} block {preemption_target['allocated_start']:%Y-%m-%d %H:%M} on {corridor_id}")
         return "preemption_pending"
 
     # `other` is only non-empty when the department pinned a specific time
@@ -285,6 +331,7 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
             },
         )
         conn.execute(text("UPDATE core.defects SET workflow_status = 'awaiting_dept_response', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
+        log_event(conn, defect_id, "reschedule_offered", "pending", "awaiting_dept_response", "system", f"offered {alt_window['window_start']:%Y-%m-%d %H:%M} on {corridor_id}")
         return "reschedule_offered"
 
     return "pending"
@@ -300,12 +347,14 @@ def respond_to_reschedule(request_id: str, accept: bool, responder: str) -> None
             conn.execute(text("UPDATE plan.modification_requests SET status = 'pending_controller' WHERE request_id = :id"), {"id": request_id})
             conn.execute(text("UPDATE core.defects SET workflow_status = 'awaiting_controller', updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
             _notify(conn, "CONTROLLER", f"{req['requesting_department']} accepted a rescheduled window on {req['proposed_corridor_id']}. Modify the plan?", request_id)
+            log_event(conn, req["defect_id"], "reschedule_accepted", "awaiting_dept_response", "awaiting_controller", responder, f"accepted {req['proposed_window_start']:%Y-%m-%d %H:%M}; awaiting controller")
         else:
             conn.execute(
                 text("UPDATE plan.modification_requests SET status = 'rejected', decided_at = now(), decided_by = :by WHERE request_id = :id"),
                 {"id": request_id, "by": responder},
             )
             conn.execute(text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
+            log_event(conn, req["defect_id"], "reschedule_rejected", "awaiting_dept_response", "pending", responder, "department declined the offered window; deferred")
 
 
 def _apply_modification_approval(conn, req, request_id: str, controller: str, reason: str | None) -> None:
@@ -328,19 +377,29 @@ def _apply_modification_approval(conn, req, request_id: str, controller: str, re
             {"id": req["affected_defect_id"]},
         )
         _notify(conn, req["affected_department"], f"Your scheduled block on {req['proposed_corridor_id']} was bumped by a higher-priority {req['requesting_department']} request. It has returned to the backlog.", request_id)
+        log_event(conn, req["affected_defect_id"], "bumped", "scheduled", "pending", controller, f"displaced by a higher-priority {req['requesting_department']} request on {req['proposed_corridor_id']}; deferred")
 
     defect = conn.execute(text("SELECT estimated_block_hours FROM core.defects WHERE defect_id = :id"), {"id": req["defect_id"]}).mappings().first()
+    group_id = None
+    start = req["proposed_window_start"]
+    if window_row:
+        # Same joint-possession rules as auto-placement: queue behind my own
+        # department's work in that window and share the group id with
+        # whatever else is in it.
+        hours_by_dept, group_id = _window_usage(conn, req["target_plan_id"], str(window_row["window_id"]))
+        start = start + timedelta(hours=hours_by_dept.get(req["requesting_department"], 0.0))
+        group_id = _join_possession(conn, req["target_plan_id"], str(window_row["window_id"]), group_id)
     conn.execute(
         text(
             """
-            INSERT INTO plan.block_assignments (plan_id, window_id, corridor_id, defect_id, department, allocated_start, allocated_end)
-            VALUES (:plan, :win, :corridor, :defect, :dept, :start, :end)
+            INSERT INTO plan.block_assignments (plan_id, window_id, corridor_id, defect_id, department, allocated_start, allocated_end, joint_block_group_id)
+            VALUES (:plan, :win, :corridor, :defect, :dept, :start, :end, :group)
             """
         ),
         {
             "plan": req["target_plan_id"], "win": window_row["window_id"] if window_row else None, "corridor": req["proposed_corridor_id"],
-            "defect": req["defect_id"], "dept": req["requesting_department"], "start": req["proposed_window_start"],
-            "end": req["proposed_window_start"] + timedelta(hours=float(defect["estimated_block_hours"])),
+            "defect": req["defect_id"], "dept": req["requesting_department"], "start": start,
+            "end": start + timedelta(hours=float(defect["estimated_block_hours"])), "group": group_id,
         },
     )
     conn.execute(text("UPDATE core.defects SET workflow_status = 'scheduled', updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
@@ -349,6 +408,7 @@ def _apply_modification_approval(conn, req, request_id: str, controller: str, re
         {"id": request_id, "by": controller, "reason": reason},
     )
     _notify(conn, req["requesting_department"], f"Controller approved your schedule change on {req['proposed_corridor_id']}.", request_id)
+    log_event(conn, req["defect_id"], "scheduled", "awaiting_controller", "scheduled", controller, f"controller approved {req['request_type']}: {start:%Y-%m-%d %H:%M} on {req['proposed_corridor_id']}" + (f" — {reason}" if reason else ""))
 
 
 def decide_modification(request_id: str, approve: bool, controller: str, reason: str | None = None) -> None:
@@ -364,6 +424,7 @@ def decide_modification(request_id: str, approve: bool, controller: str, reason:
             )
             conn.execute(text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
             _notify(conn, req["requesting_department"], f"Controller rejected your requested schedule change on {req['proposed_corridor_id'] or ''}: {reason or 'no reason given'}.", request_id)
+            log_event(conn, req["defect_id"], "modification_rejected", "awaiting_controller", "pending", controller, f"controller rejected {req['request_type']}: {reason or 'no reason given'}; deferred")
         else:
             _apply_modification_approval(conn, req, request_id, controller, reason)
 

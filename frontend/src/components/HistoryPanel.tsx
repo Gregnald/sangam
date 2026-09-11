@@ -7,7 +7,8 @@ import { MonthPlanCard } from "./MonthPlanCard";
 import { WeeklyPlanRow } from "./WeeklyPlanRow";
 import { fmtDate, planTimeState } from "../lib/dates";
 import { useAppStore } from "../store/appStore";
-import type { ModificationRequest, PlanHistoryEntry } from "../types/api";
+import type { ModelVersion, ModificationRequest, PlanHistoryEntry } from "../types/api";
+import { BacklogHistory } from "./BacklogHistory";
 
 interface SnapshotRow {
   corridor_id: string;
@@ -49,7 +50,7 @@ function SnapshotRowView({ entry }: { entry: PlanHistoryEntry }) {
 
   return (
     <div className="border border-ops-border">
-      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-white/5">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-ops-hover">
         <span className="text-xs text-ops-text">
           <span className={entry.snapshotType === "proposed" ? "text-amber-400" : entry.snapshotType === "rejected" ? "text-red-400" : "text-emerald-400"}>
             {entry.snapshotType}
@@ -59,7 +60,7 @@ function SnapshotRowView({ entry }: { entry: PlanHistoryEntry }) {
         <span className="text-[10px] text-ops-muted mono">{new Date(entry.snapshotAt).toLocaleString()}</span>
       </button>
       {open && (
-        <div className="p-3 space-y-2 bg-black/10">
+        <div className="p-3 space-y-2 bg-ops-inset">
           <CorridorPicker zone={null} value={corridorId} onChange={setCorridorId} />
           {corridorId ? (
             <SnapshotGantt rows={filtered} rangeStart={range.start} rangeEnd={range.end} />
@@ -79,7 +80,7 @@ function PeriodCard({ periodKey, entries, isCurrentlyActive }: { periodKey: stri
 
   return (
     <div className="border border-ops-border">
-      <button onClick={() => setExpanded((e) => !e)} className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-white/5">
+      <button onClick={() => setExpanded((e) => !e)} className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-ops-hover">
         <div className="flex items-center gap-3">
           <span className="text-xs font-semibold text-ops-text mono">{periodLabel}</span>
           <span className="text-[10px] text-ops-muted uppercase">{horizonType}</span>
@@ -98,7 +99,59 @@ function PeriodCard({ periodKey, entries, isCurrentlyActive }: { periodKey: stri
   );
 }
 
+const SUB_TABS = ["Plans", "Backlog", "Modifications", "Model versions"] as const;
+type SubTab = (typeof SUB_TABS)[number];
+
+function ModelVersions() {
+  const [versions, setVersions] = useState<ModelVersion[]>([]);
+  useEffect(() => {
+    api.get<ModelVersion[]>("/api/v1/plans/models").then(setVersions);
+  }, []);
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-ops-muted">
+        Every retrain of the priority ranker. A candidate is promoted only when its holdout ranking score is at least as good as the model in use;
+        controller approve/reject decisions are folded in as label nudges, so the count of decisions used shows how much human feedback each version learned from.
+      </p>
+      <div className="border border-ops-border overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-ops-inset text-ops-muted uppercase text-[10px]">
+            <tr>
+              <th className="text-left p-2">Trained</th>
+              <th className="text-left p-2">Holdout Spearman</th>
+              <th className="text-left p-2">Controller decisions used</th>
+              <th className="text-left p-2">Status</th>
+              <th className="text-left p-2">Artifact</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ops-border">
+            {versions.length === 0 && (
+              <tr>
+                <td colSpan={5} className="p-4 text-center text-ops-muted">
+                  No model versions yet.
+                </td>
+              </tr>
+            )}
+            {versions.map((v) => (
+              <tr key={v.versionId}>
+                <td className="p-2 text-ops-muted mono whitespace-nowrap">{new Date(v.trainedAt).toLocaleString()}</td>
+                <td className="p-2 text-ops-text mono">{typeof v.metrics?.holdout_spearman === "number" ? (v.metrics.holdout_spearman as number).toFixed(3) : "—"}</td>
+                <td className="p-2 text-ops-text mono">{String(v.metrics?.n_controller_decisions_used ?? "—")}</td>
+                <td className={`p-2 font-semibold ${v.promoted ? "text-emerald-400" : "text-ops-muted"}`}>{v.promoted ? "IN USE" : "challenger (kept)"}</td>
+                <td className="p-2 text-ops-muted mono truncate max-w-xs" title={v.artifactPath}>
+                  {v.artifactPath.split(/[\\/]/).pop()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export function HistoryPanel({ scope, department }: { scope: "own" | "all"; department?: string }) {
+  const [sub, setSub] = useState<SubTab>("Plans");
   const [entries, setEntries] = useState<PlanHistoryEntry[]>([]);
   const [modifications, setModifications] = useState<ModificationRequest[]>([]);
   const { plans, fetchPlans } = useAppStore();
@@ -109,7 +162,7 @@ export function HistoryPanel({ scope, department }: { scope: "own" | "all"; depa
     fetchPlans();
   }, [fetchPlans]);
 
-  const decided = modifications.filter((m) => m.status === "approved" || m.status === "rejected");
+  const decided = modifications.filter((m) => m.status === "approved" || m.status === "rejected" || m.status === "lapsed");
   const groups = Array.from(groupByPeriod(entries).entries()).sort((a, b) => b[0].localeCompare(a[0]));
 
   const activePeriodKeys = new Set(
@@ -125,11 +178,34 @@ export function HistoryPanel({ scope, department }: { scope: "own" | "all"; depa
   const pastWeekly = plans.filter((p) => p.horizonType === "weekly" && isDone(p)).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      <div className="flex items-center gap-1 border-b border-ops-border">
+        {SUB_TABS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setSub(t)}
+            className={`px-3 py-1.5 text-xs font-medium -mb-px border-b-2 ${sub === t ? "border-ops-accent text-ops-text" : "border-transparent text-ops-muted hover:text-ops-text"}`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {sub === "Backlog" && <BacklogHistory scope={scope} department={department} />}
+      {sub === "Model versions" && <ModelVersions />}
+      {sub === "Modifications" && (
+        <div>
+          <p className="text-[11px] text-ops-muted mb-2">Reschedule offers and priority-bump requests that have been decided — approved, rejected, or lapsed because their window passed.</p>
+          <ModificationList items={decided} mode="controller" />
+        </div>
+      )}
+
+      {sub === "Plans" && (
+      <div className="space-y-6">
       <p className="text-[11px] text-ops-muted">
         {scope === "all"
-          ? "Every department's schedule history and decided modification requests."
-          : `${department ?? "Your department"}'s own schedule history and decided modification requests.`}
+          ? "Every generation and approval of every plan, as proposed and as approved, plus plans that are past, rejected or superseded."
+          : `${department ?? "Your department"}'s slice of every plan snapshot, plus plans that are past, rejected or superseded.`}
       </p>
 
       <div>
@@ -157,10 +233,8 @@ export function HistoryPanel({ scope, department }: { scope: "own" | "all"; depa
         </div>
       </div>
 
-      <div>
-        <h3 className="text-xs font-semibold text-ops-text mb-2">Modification Requests History</h3>
-        <ModificationList items={decided} mode="controller" />
       </div>
+      )}
     </div>
   );
 }

@@ -32,3 +32,4 @@ ortools>=9.11
 # --- Auth ---
 bcrypt>=4.2
 pyjwt>=2.10
+apscheduler>=3.10

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.db import get_db
-from app.schemas import BlockAssignment, BlockPlan, BulkPlanResult, PlanHistoryEntry, PlanKpis, RejectPlanBody
+from app.schemas import BlockAssignment, BlockPlan, BulkPlanResult, ModelVersion, PlanHistoryEntry, PlanKpis, RejectPlanBody
 from optimizer.kpis import compute_plan_kpis
 from optimizer.run import (
     approve_plan,
@@ -137,6 +137,13 @@ def reject(plan_id: str, body: RejectPlanBody, user: CurrentUser = Depends(requi
         raise HTTPException(400, str(exc)) from exc
     row = db.execute(text("SELECT * FROM plan.block_plans WHERE plan_id = :id"), {"id": plan_id}).mappings().first()
     return BlockPlan.model_validate(dict(row))
+
+
+@router.get("/models", response_model=list[ModelVersion])
+def list_model_versions(limit: int = Query(50, le=200), db: Session = Depends(get_db)):
+    """Every priority-ranker retrain: when, its holdout score, and whether it was promoted."""
+    rows = db.execute(text("SELECT * FROM plan.model_versions ORDER BY trained_at DESC LIMIT :limit"), {"limit": limit}).mappings().all()
+    return [ModelVersion.model_validate(dict(r)) for r in rows]
 
 
 @router.get("/history", response_model=list[PlanHistoryEntry])

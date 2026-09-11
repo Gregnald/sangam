@@ -60,7 +60,7 @@ export function MonthPlanCard({
         tabIndex={0}
         onClick={() => setExpanded((e) => !e)}
         onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-white/5 cursor-pointer"
+        className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-ops-hover cursor-pointer"
       >
         <div className="flex items-center gap-3">
           <span className="text-xs font-semibold text-ops-text mono">{plan.periodLabel}</span>
@@ -124,7 +124,7 @@ function WeekRow({ start, end, state, approved, zone, planId }: { start: Date; e
   const stateColor = state === "past" ? "text-ops-muted" : state === "current" ? "text-emerald-400" : "text-blue-400";
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-white/5">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-2 text-left hover:bg-ops-hover">
         <span className="text-[11px] text-ops-text">
           Week of {start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – {end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{" "}
           <span className={`font-semibold ${stateColor}`}>{stateLabel}</span>

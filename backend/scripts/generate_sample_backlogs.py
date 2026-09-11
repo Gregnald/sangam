@@ -18,7 +18,9 @@ DEFECT_TYPES = {
 }
 SEVERITY_WEIGHTS = [("A", 0.2), ("B", 0.35), ("C", 0.45)]
 DUE_OFFSET_DAYS = {"A": (5, 10), "B": (10, 20), "C": (20, 45)}
-BLOCK_HOURS_RANGE = (2.0, 8.0)
+# Corridor blocks in practice run 1.5–5 h; anything longer is a special
+# possession with train cancellations, which this planner doesn't model.
+BLOCK_HOURS_RANGE = (1.5, 5.0)
 
 HEADER = [
     "corridor_id", "asset_id", "defect_type", "severity_code", "detected_date",
@@ -28,6 +30,14 @@ HEADER = [
 # Share of rows that pin a preferred block window (the rest leave it to the
 # planner). Pinned rows draw as "Requested" on the Gantt.
 REQUESTED_WINDOW_SHARE = 0.35
+# Defects cluster: a worn section tends to throw up track, signalling and
+# OHE work together, and that co-location is exactly what a coordinated
+# block plan exploits. This share of every department's rows lands on a
+# common pool of "hot" sections (the same pool for all three departments, so
+# multi-department possessions are possible); the rest scatter randomly.
+HOT_SECTION_SHARE = 0.6
+HOT_SECTION_COUNT = 40
+HOT_SECTION_SEED = 2026
 
 
 def _weighted_severity(rng: random.Random) -> str:
@@ -49,8 +59,32 @@ def generate(department: str, n_rows: int, seed_value: int, out_dir: Path) -> Pa
         assets = conn.execute(
             text("SELECT asset_id, corridor_id FROM core.assets WHERE department = :d"), {"d": department}
         ).mappings().all()
+        # Hot sections are picked with a seed shared by every department so
+        # all three land work on the same corridors. Busier corridors first —
+        # that is where the real backlog concentrates too.
+        # Sections that actually see traffic *and* still have a gap long
+        # enough for a real block (≥ 5 h). The very busiest trunk sections
+        # have no such gap — work there needs train regulation, which is
+        # outside this planner — so they are not where demo backlog goes.
+        hot_corridors = conn.execute(
+            text(
+                """
+                SELECT c.corridor_id
+                FROM core.corridors c
+                JOIN (
+                    SELECT corridor_id, max(EXTRACT(EPOCH FROM (window_end - window_start)) / 3600.0) AS longest_h
+                    FROM core.corridor_block_windows GROUP BY corridor_id
+                ) w ON w.corridor_id = c.corridor_id
+                WHERE c.zone IS NOT NULL AND c.train_count BETWEEN 2 AND 40 AND w.longest_h >= 5
+                ORDER BY c.train_count DESC, c.corridor_id
+                LIMIT 400
+                """
+            )
+        ).scalars().all()
     if not assets:
         raise RuntimeError(f"no assets found for {department} — run the pipeline first")
+    hot_pool = random.Random(HOT_SECTION_SEED).sample(hot_corridors, min(HOT_SECTION_COUNT, len(hot_corridors)))
+    hot_assets = [a for a in assets if a["corridor_id"] in set(hot_pool)]
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -58,7 +92,7 @@ def generate(department: str, n_rows: int, seed_value: int, out_dir: Path) -> Pa
     ws.append(HEADER)
 
     for _ in range(n_rows):
-        asset = rng.choice(assets)
+        asset = rng.choice(hot_assets) if hot_assets and rng.random() < HOT_SECTION_SHARE else rng.choice(assets)
         defect_type = rng.choice(DEFECT_TYPES[department])
         severity = _weighted_severity(rng)
         detected_date = month_start + timedelta(days=rng.randint(0, max((today - month_start).days, 0)))

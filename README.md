@@ -15,8 +15,12 @@ independently through a spreadsheet-style process.
 - **A trained priority model**: XGBoost learning-to-rank with a hard
   safety-floor rule and SHAP explanations, scoring every open request.
 - **A real optimizer**: Google OR-Tools CP-SAT solves the actual block
-  assignment problem, respecting a department-compatibility matrix and
-  corridor capacity.
+  assignment problem as *integrated blocks*: one possession per timetable
+  gap, departments working in parallel inside it (if the compatibility
+  matrix allows the pair), same-department jobs queued back to back, and the
+  objective charging for possession length so bundling work into one block
+  is what the solver is pulled toward. The live request workflow slots new
+  work into existing possessions under the same rules. See "Joint blocks".
 - **Control Office goods-train forecast**: freight paths aren't in the
   passenger timetable, so the COA's per-corridor/per-day forecast is
   ingested separately (`core.goods_train_forecasts`) and carved out of the
@@ -35,15 +39,12 @@ independently through a spreadsheet-style process.
   already-scheduled lower-priority block. Bumping and accepted reschedules
   both require controller approval before anything changes. Everyone affected
   gets notified.
+- **Light and dark themes**: toggle in the top bar (and on the login page).
+  The choice is remembered per browser; with no choice made, the app follows
+  the OS setting. Every colour is a token in `frontend/src/index.css`, so
+  both themes are defined in one place.
 - **Login**: four accounts (`engg_dept`, `trd_dept`, `snt_dept`, `controller`),
   passwords bcrypt-hashed in the database. Each role sees its own dashboard.
-- **A live map of the whole Indian rail network**, styled with a small MapCSS
-  interpreter, colored by real-time status: red = blocked, amber = a train is
-  currently running through it, green = clear. Each corridor shows its UP/DOWN
-  direction labels, and the map has a date/time control to simulate what the
-  network looked like (or will look like) at any moment, not just right now.
-  Clicking a corridor opens its day-by-day block schedule for any week you
-  pick, including who's working and when.
 - **Per-block compatibility overrides**: the department-pair matrix has a
   sensible default, but the controller can override it for one exact
   corridor/day/window from the Compatibility tab when a specific block needs
@@ -119,6 +120,57 @@ workflow below.
      modification, with the affected day highlighted and a line spelling out
      what changed from what was originally requested.
 
+## Joint blocks
+
+A block window is one candidate possession on one corridor. The model in
+`backend/optimizer/model.py` lets any number of jobs share it:
+
+- **Different departments work in parallel** — an ENGG crew on the track
+  and an S&T crew in the relay room don't queue behind each other. Whether
+  two departments may share a possession at all is `core.compatibility_matrix`
+  (with per-window overrides), and the window's `max_concurrent_depts` caps
+  how many can be on the section at once.
+- **Same-department jobs run in sequence** — one crew, one job after
+  another — so their durations add up and must fit the window.
+- The possession lasts as long as the busiest department's queue, and that
+  length is what the objective charges for (plus a fixed cost per block
+  event and a lateness cost past the due date). Placing a job always beats
+  leaving it out; the possession terms only decide *where* work goes.
+
+Jobs sharing a possession carry the same `joint_block_group_id`. The Gantt
+stacks them in lanes with a light outline; the KPI panel counts them
+("block events · shared · multi-department") and reports the possession
+hours saved versus one block per job. The live workflow (`workflow/engine.py`)
+prefers joining an existing possession over opening a new window and applies
+the same per-department queue and compatibility rules.
+
+With the default matrix, ENGG and SIGNAL bundle freely; TRD only shares a
+block once the controller marks that specific window compatible, because TRD
+work needs a confirmed OHE isolation.
+
+## The clock
+
+The backend reconciles the backlog with the wall clock at startup and every
+minute after (`workflow/clock.py`, scheduled with APScheduler): a scheduled
+block whose window has ended becomes **completed**; a reschedule offer or a
+priority-bump request whose target window has already started **lapses** and
+the request returns to the backlog as one more deferral. A pending request
+past its due date is reported as **overdue** (a flag, not a status change).
+The requests API also returns each request's live block (from the approved
+plan), whether it is upcoming / in progress / completed, and its most recent
+event.
+
+Every transition is written to `core.defect_events` — submitted / ingested,
+placed by which plan, offers and responses, bumps, releases by a
+re-generated plan, lapses, completions — and shown under History → Backlog,
+and as the "last event" on each request.
+
+Departments get **My Blocks** (every block of theirs with its live status —
+in progress, scheduled, requested, needs response, overdue, completed — each
+card expanding to that day's Gantt) and **Plan** (the published monthly and
+weekly plan covering today for a zone, switchable to any other approved
+plan). Corridor pickers everywhere go zone first, then corridor.
+
 ## Department compatibility
 
 `core.compatibility_matrix` records which department pairs may share one
@@ -138,7 +190,7 @@ docker compose up -d db
 cd backend
 python -m venv .venv && ./.venv/Scripts/activate   # or `source .venv/bin/activate`
 pip install -r requirements.txt
-python -m scripts.run_pipeline        # loads mapData/, seeds accounts + backlog, trains the model
+python -m scripts.run_pipeline        # loads mapData/, seeds accounts, trains the model
 python main.py                        # runs the API on 127.0.0.1:8000
 
 # Frontend (desktop)
@@ -155,7 +207,7 @@ Sample inputs for the controller's **Ingest** tab live in `sample_data/` and
 can be regenerated against the loaded network:
 
 ```bash
-python -m scripts.generate_sample_backlogs        # ENGG/SIGNAL/TRD backlog .xlsx (about a third of rows pin a preferred window)
+python -m scripts.generate_sample_backlogs        # ENGG/SIGNAL/TRD backlog .xlsx — clustered on ~40 shared "hot" sections so joint blocks are possible; a third of rows pin a preferred window
 python -m scripts.generate_sample_goods_forecast  # COA goods-train forecast .xlsx for the corridors carrying backlog
 ```
 
@@ -187,11 +239,9 @@ backend/
 frontend/
   electron/               main.cjs (spawns `python main.py`), preload.cjs
   src/
-    lib/mapcss/           MapCSS parser + compiler → MapLibre GL layers
-    mapcss/rail-style.mapcss
     pages/                LoginPage, DepartmentDashboard, ControllerDashboard
-    components/           NetworkMap, CorridorSchedulePanel, CorridorGantt, CorridorPicker,
-                           MonthPlanCard, WeeklyPlanView, BlockCompatibilityEditor,
-                           RequestsTable, ModificationList, WeeklySchedule, HistoryPanel
+    components/           CorridorGantt, CorridorPicker, PlanKpiPanel, MonthPlanCard, WeeklyPlanView,
+                           BlockCompatibilityEditor, RequestsTable, ModificationList, IngestionPage,
+                           WeeklySchedule, HistoryPanel
     store/                authStore, appStore (Zustand)
 ```

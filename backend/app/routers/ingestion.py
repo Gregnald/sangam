@@ -12,6 +12,8 @@ from etl import conform_defects, ingest_excel
 from ml import score_priority
 from scripts import retrain_ranker
 from workflow.engine import place_existing_defect
+from workflow.events import log_events
+from app.db import engine as db_engine
 
 logger = logging.getLogger("sangam.app.routers.ingestion")
 
@@ -59,6 +61,9 @@ async def ingest_backlog_excel(
 
     result = ingest_excel.ingest_backlog(department, rows, requested_by=user.username)
     new_defect_ids = conform_defects.conform()
+    if new_defect_ids:
+        with db_engine.begin() as conn:
+            log_events(conn, new_defect_ids, "ingested", None, "pending", user.username, f"{department} backlog upload ({file.filename})")
 
     model_promoted = False
     if new_defect_ids:

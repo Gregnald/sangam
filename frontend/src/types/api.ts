@@ -24,7 +24,8 @@ export interface PriorityFactor {
   score: number;
 }
 
-export type WorkflowStatus = "pending" | "scheduled" | "awaiting_dept_response" | "awaiting_controller" | "cleared";
+export type WorkflowStatus = "pending" | "scheduled" | "awaiting_dept_response" | "awaiting_controller" | "completed" | "cleared";
+export type ExecutionState = "upcoming" | "in_progress" | "completed";
 
 export interface DefectRequest {
   defectId: string;
@@ -46,6 +47,44 @@ export interface DefectRequest {
   workflowStatus: WorkflowStatus;
   priorityScore: number | null;
   priorityExplanation: PriorityFactor[] | null;
+  updatedAt: string | null;
+  allocatedStart: string | null;
+  allocatedEnd: string | null;
+  planId: string | null;
+  planPeriodLabel: string | null;
+  jointBlockGroupId: string | null;
+  groupDepartments: Department[] | null;
+  groupSize: number | null;
+  isOverdue: boolean;
+  executionState: ExecutionState | null;
+  lastEventType: string | null;
+  lastEventAt: string | null;
+  lastEventDetails: string | null;
+  lastEventActor: string | null;
+}
+
+export interface DefectEvent {
+  eventId: string;
+  defectId: string;
+  eventType: string;
+  fromStatus: string | null;
+  toStatus: string | null;
+  actor: string | null;
+  details: string | null;
+  occurredAt: string;
+  department: Department;
+  corridorId: string | null;
+  zone: string | null;
+  defectType: string;
+  severityCode: "A" | "B" | "C";
+}
+
+export interface ModelVersion {
+  versionId: string;
+  trainedAt: string;
+  artifactPath: string;
+  metrics: Record<string, unknown> | null;
+  promoted: boolean;
 }
 
 export interface BulkPlanResult {
@@ -88,7 +127,7 @@ export interface BlockAssignment {
 }
 
 export type ModificationType = "reschedule" | "preemption";
-export type ModificationStatus = "pending_dept" | "pending_controller" | "approved" | "rejected";
+export type ModificationStatus = "pending_dept" | "pending_controller" | "approved" | "rejected" | "lapsed";
 
 export interface ModificationRequest {
   requestId: string;
@@ -274,7 +313,3 @@ export interface PlanHistoryEntry {
   payload: unknown;
 }
 
-export interface NetworkGeoJSON {
-  type: "FeatureCollection";
-  features: GeoJSON.Feature[];
-}

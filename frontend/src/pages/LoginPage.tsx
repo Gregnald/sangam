@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
+import { ThemeToggle } from "../components/ThemeToggle";
 
 export function LoginPage() {
   const [username, setUsername] = useState("");
@@ -24,14 +25,15 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-ops-bg">
+    <div className="min-h-screen flex items-center justify-center bg-ops-bg relative">
+      <ThemeToggle className="absolute top-4 right-4" />
       <form onSubmit={handleSubmit} className="w-full max-w-sm border border-ops-border bg-ops-panel p-8">
         <h1 className="text-lg font-semibold text-ops-text tracking-wide">SANGAM</h1>
         <p className="text-xs text-ops-muted mt-1 mb-6">Block Planning &amp; Coordination</p>
 
         <label className="block text-xs font-medium text-ops-muted mb-1">Username</label>
         <input
-          className="w-full mb-4 px-3 py-2 bg-black/20 border border-ops-border text-ops-text text-sm focus:outline-none focus:border-ops-accent"
+          className="w-full mb-4 px-3 py-2 bg-ops-inset border border-ops-border text-ops-text text-sm focus:outline-none focus:border-ops-accent"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           autoFocus
@@ -40,7 +42,7 @@ export function LoginPage() {
         <label className="block text-xs font-medium text-ops-muted mb-1">Password</label>
         <input
           type="password"
-          className="w-full mb-6 px-3 py-2 bg-black/20 border border-ops-border text-ops-text text-sm focus:outline-none focus:border-ops-accent"
+          className="w-full mb-6 px-3 py-2 bg-ops-inset border border-ops-border text-ops-text text-sm focus:outline-none focus:border-ops-accent"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />

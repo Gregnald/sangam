@@ -93,7 +93,7 @@ def compute_plan_kpis(conn, plan_id: str) -> dict:
             SELECT d.defect_id, d.severity_code, d.due_date, d.speed_restriction_kmph, d.department
             FROM core.defects d
             JOIN core.corridors c ON c.corridor_id = d.corridor_id
-            WHERE c.zone = :z AND d.workflow_status != 'cleared'
+            WHERE c.zone = :z AND d.workflow_status NOT IN ('cleared', 'completed')
             """
         ),
         {"z": zone},

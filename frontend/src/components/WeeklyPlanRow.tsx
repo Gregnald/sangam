@@ -33,7 +33,7 @@ export function WeeklyPlanRow({
         tabIndex={0}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-white/5 cursor-pointer"
+        className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-ops-hover cursor-pointer"
       >
         <div className="flex items-center gap-3">
           <span className="text-xs font-semibold text-ops-text mono">{periodLabel}</span>

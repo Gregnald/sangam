@@ -3,7 +3,6 @@ import { TopBar } from "../components/TopBar";
 import { RequestsTable } from "../components/RequestsTable";
 import { ModificationList } from "../components/ModificationList";
 import { HistoryPanel } from "../components/HistoryPanel";
-import { MapTab } from "../components/MapTab";
 import { MonthPlanCard } from "../components/MonthPlanCard";
 import { WeeklyPlanRow } from "../components/WeeklyPlanRow";
 import { BlockCompatibilityEditor } from "../components/BlockCompatibilityEditor";
@@ -12,10 +11,10 @@ import { planTimeState } from "../lib/dates";
 import { useAppStore } from "../store/appStore";
 import type { BulkPlanResult } from "../types/api";
 
-const TABS = ["Map", "Backlog", "Approvals", "Plans", "Compatibility", "Ingest", "History"];
+const TABS = ["Backlog", "Approvals", "Plans", "Compatibility", "Ingest", "History"];
 
 export function ControllerDashboard() {
-  const [tab, setTab] = useState("Map");
+  const [tab, setTab] = useState("Backlog");
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
   const [planZone, setPlanZone] = useState<string | null>(null);
   const [monthsAhead, setMonthsAhead] = useState<0 | 1 | 2>(1);
@@ -34,6 +33,13 @@ export function ControllerDashboard() {
     fetchRequests();
     fetchModifications();
     fetchPlans();
+    // The backend reconciles the backlog with the clock every minute
+    // (completed blocks, lapsed offers); pick those changes up.
+    const interval = setInterval(() => {
+      fetchRequests();
+      fetchModifications();
+    }, 60000);
+    return () => clearInterval(interval);
   }, [fetchZones, fetchRequests, fetchModifications, fetchPlans]);
 
   useEffect(() => {
@@ -115,7 +121,6 @@ export function ControllerDashboard() {
       <TopBar tabs={TABS} active={tab} onTabChange={setTab} />
 
       <main className="flex-1 overflow-y-auto p-5">
-        {tab === "Map" && <MapTab />}
 
         {tab === "Backlog" && (
           <div>
@@ -134,14 +139,14 @@ export function ControllerDashboard() {
         {tab === "Plans" && (
           <div className="space-y-6">
             <div className="flex items-center gap-3 flex-wrap">
-              <select value={planZone ?? ""} onChange={(e) => setPlanZone(e.target.value || null)} className="text-xs bg-black/20 border border-ops-border text-ops-text px-2 py-1">
+              <select value={planZone ?? ""} onChange={(e) => setPlanZone(e.target.value || null)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
                 {zones.map((z) => (
                   <option key={z.zone ?? "none"} value={z.zone ?? ""}>
                     {z.zone}
                   </option>
                 ))}
               </select>
-              <select value={monthsAhead} onChange={(e) => setMonthsAhead(Number(e.target.value) as 0 | 1 | 2)} className="text-xs bg-black/20 border border-ops-border text-ops-text px-2 py-1">
+              <select value={monthsAhead} onChange={(e) => setMonthsAhead(Number(e.target.value) as 0 | 1 | 2)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
                 <option value={0}>Current month</option>
                 <option value={1}>Next month</option>
                 <option value={2}>Month after</option>

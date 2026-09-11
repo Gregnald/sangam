@@ -4,6 +4,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { DepartmentDashboard } from "./pages/DepartmentDashboard";
 import { ControllerDashboard } from "./pages/ControllerDashboard";
 import { useAuthStore } from "./store/authStore";
+import { useThemeStore } from "./store/themeStore";
 
 function Home() {
   const role = useAuthStore((s) => s.role);
@@ -19,10 +20,12 @@ function RequireAuth({ children }: { children: React.ReactElement }) {
 
 function App() {
   const restore = useAuthStore((s) => s.restore);
+  const initTheme = useThemeStore((s) => s.init);
 
   useEffect(() => {
+    initTheme();
     restore();
-  }, [restore]);
+  }, [initTheme, restore]);
 
   return (
     <Router>

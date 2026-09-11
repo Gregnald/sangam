@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.corridor_status import compute_statuses
 from app.db import get_db
 from app.goods_forecast import IST, clip_window_rows, load_bands
 from app.schemas import (
@@ -15,7 +13,6 @@ from app.schemas import (
     Corridor,
     CorridorSchedule,
     GoodsForecastBand,
-    NetworkGeoJSON,
     ScheduleAssignment,
     SchedulePendingRequest,
     ScheduleTraversal,
@@ -82,88 +79,6 @@ def get_corridors(zone: str | None = Query(None), search: str | None = Query(Non
     params["limit"] = 300 if search else 5000
     rows = db.execute(text(query), params).mappings().all()
     return [Corridor.model_validate(dict(r)) for r in rows]
-
-
-@router.get("/network/geojson", response_model=NetworkGeoJSON)
-def network_geojson(
-    zone: str | None = Query(None),
-    simulated_at: datetime | None = Query(None, alias="simulatedAt"),
-    limit: int = Query(20000, le=40000),
-    db: Session = Depends(get_db),
-):
-    params: dict = {"limit": limit}
-    where = ""
-    if zone:
-        where = "WHERE c.zone = :zone"
-        params["zone"] = zone
-
-    statuses = compute_statuses(db.connection(), as_of=simulated_at)
-
-    corridor_rows = db.execute(
-        text(
-            f"""
-            SELECT c.corridor_id, c.station_a_code, c.station_b_code, c.direction, c.line_name, c.zone, ST_AsGeoJSON(c.geom) AS geom,
-                   COUNT(d.defect_id) FILTER (WHERE d.workflow_status != 'cleared') AS pending_count,
-                   array_agg(DISTINCT d.department) FILTER (WHERE d.workflow_status != 'cleared') AS departments
-            FROM core.corridors c
-            LEFT JOIN core.defects d ON d.corridor_id = c.corridor_id
-            {where}
-            GROUP BY c.corridor_id
-            ORDER BY c.train_count DESC
-            LIMIT :limit
-            """
-        ),
-        params,
-    ).mappings().all()
-
-    features = []
-    for r in corridor_rows:
-        status = statuses.get(r["corridor_id"], "clear")
-        opposite_id = f"COR-{r['station_b_code']}-{r['station_a_code']}"
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": json.loads(r["geom"]),
-                "properties": {
-                    "kind": "way",
-                    "corridor_id": r["corridor_id"],
-                    "station_a_code": r["station_a_code"],
-                    "station_b_code": r["station_b_code"],
-                    "line_name": r["line_name"],
-                    "zone": r["zone"],
-                    "status": status,
-                    "pending_count": int(r["pending_count"] or 0),
-                    "departments": ",".join(sorted(d for d in (r["departments"] or []) if d)),
-                    "direction": r["direction"],
-                    "direction_label": f"{r['station_a_code']} → {r['station_b_code']} ({r['direction'].upper()})",
-                    "opposite_corridor_id": opposite_id,
-                },
-            }
-        )
-
-    station_where = "WHERE c.zone = :zone" if zone else ""
-    station_rows = db.execute(
-        text(
-            f"""
-            SELECT DISTINCT s.station_id, s.name, s.code, ST_AsGeoJSON(s.geom) AS geom
-            FROM core.stations s
-            JOIN core.corridors c ON c.station_a_code = s.code OR c.station_b_code = s.code
-            {station_where}
-            LIMIT :limit
-            """
-        ),
-        params,
-    ).mappings().all()
-    for r in station_rows:
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": json.loads(r["geom"]),
-                "properties": {"kind": "node", "station_id": r["station_id"], "name": r["name"], "code": r["code"]},
-            }
-        )
-
-    return NetworkGeoJSON(features=features)
 
 
 @router.get("/corridors/{corridor_id}/schedule", response_model=CorridorSchedule)

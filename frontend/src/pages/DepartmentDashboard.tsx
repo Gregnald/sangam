@@ -2,33 +2,33 @@ import { useEffect, useState } from "react";
 import { TopBar } from "../components/TopBar";
 import { RequestsTable } from "../components/RequestsTable";
 import { ModificationList } from "../components/ModificationList";
-import { WeeklySchedule } from "../components/WeeklySchedule";
+import { MyBlocks } from "../components/dept/MyBlocks";
+import { DeptPlanView } from "../components/dept/DeptPlanView";
 import { HistoryPanel } from "../components/HistoryPanel";
-import { MapTab } from "../components/MapTab";
 import { RequestForm } from "../components/dept/RequestForm";
 import { useAppStore } from "../store/appStore";
 import { useAuthStore } from "../store/authStore";
 
-const TABS = ["Requests", "Actions Needed", "This Week", "Map", "History"];
+const TABS = ["Requests", "My Blocks", "Actions Needed", "Plan", "History"];
 
 export function DepartmentDashboard() {
   const [tab, setTab] = useState("Requests");
   const [showForm, setShowForm] = useState(false);
   const role = useAuthStore((s) => s.role);
   const {
-    requests, modifications, activeAssignments, zones, selectedZone,
-    fetchZones, fetchRequests, fetchModifications, fetchActiveWeeklyAssignments, respondToReschedule, setSelectedZone,
+    requests, modifications, zones, selectedZone,
+    fetchZones, fetchRequests, fetchModifications, respondToReschedule, setSelectedZone,
   } = useAppStore();
 
   useEffect(() => {
     fetchZones();
     fetchRequests();
     fetchModifications();
+    // The backend reconciles the backlog with the clock every minute
+    // (completed blocks, lapsed offers); pick those changes up.
+    const interval = setInterval(fetchRequests, 60000);
+    return () => clearInterval(interval);
   }, [fetchZones, fetchRequests, fetchModifications]);
-
-  useEffect(() => {
-    if (selectedZone) fetchActiveWeeklyAssignments();
-  }, [selectedZone, fetchActiveWeeklyAssignments]);
 
   const pendingForDept = modifications.filter((m) => m.status === "pending_dept" || m.status === "pending_controller");
 
@@ -46,7 +46,7 @@ export function DepartmentDashboard() {
                 <select
                   value={selectedZone ?? ""}
                   onChange={(e) => setSelectedZone(e.target.value || null)}
-                  className="text-xs bg-black/20 border border-ops-border text-ops-text px-2 py-1"
+                  className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1"
                 >
                   {zones.map((z) => (
                     <option key={z.zone ?? "none"} value={z.zone ?? ""}>
@@ -74,14 +74,20 @@ export function DepartmentDashboard() {
           </div>
         )}
 
-        {tab === "This Week" && (
+        {tab === "My Blocks" && (
           <div>
-            <h2 className="text-sm font-semibold text-ops-text mb-3">This Week's Schedule — {role}</h2>
-            <WeeklySchedule assignments={activeAssignments} department={role ?? undefined} />
+            <h2 className="text-sm font-semibold text-ops-text mb-3">{role} — My Blocks</h2>
+            <MyBlocks requests={requests} />
           </div>
         )}
 
-        {tab === "Map" && <MapTab />}
+        {tab === "Plan" && (
+          <div>
+            <h2 className="text-sm font-semibold text-ops-text mb-3">Published Plans</h2>
+            <DeptPlanView />
+          </div>
+        )}
+
 
         {tab === "History" && (
           <div>

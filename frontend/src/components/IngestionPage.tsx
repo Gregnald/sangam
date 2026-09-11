@@ -56,7 +56,6 @@ function BacklogUploadCard({ department, label }: { department: string; label: s
       const res = await api.postForm<BacklogResult>("/api/v1/ingest/backlog", form);
       setResult(res);
       await Promise.all([useAppStore.getState().fetchRequests(), useAppStore.getState().fetchZones(), useAppStore.getState().fetchModifications()]);
-      useAppStore.getState().bumpMapRefresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -130,7 +129,6 @@ function ScheduleUploadCard() {
       form.append("file", file);
       const res = await api.postForm<ScheduleResult>("/api/v1/ingest/schedule", form);
       setResult(res);
-      useAppStore.getState().bumpMapRefresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -185,7 +183,6 @@ function GoodsForecastUploadCard() {
       form.append("file", file);
       const res = await api.postForm<GoodsForecastResult>("/api/v1/ingest/goods-forecast", form);
       setResult(res);
-      useAppStore.getState().bumpMapRefresh();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {

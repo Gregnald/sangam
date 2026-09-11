@@ -77,6 +77,11 @@ export function ModificationList({
                 rangeEnd={fmtDate(weekEnd!)}
                 highlightWindowStart={m.proposedWindowStart}
                 highlightWindowEnd={m.proposedWindowEnd}
+                highlightLabel={
+                  m.requestType === "preemption"
+                    ? `Slot to be freed for ${m.requestingDepartment} (currently ${m.affectedDepartment ?? "another dept"}'s block)`
+                    : `Offered alternate slot for ${m.requestingDepartment} ${(m.defectType ?? "").replace(/_/g, " ")}`
+                }
               />
             </div>
           )}
@@ -114,7 +119,7 @@ export function ModificationList({
                 placeholder="reason (optional)"
                 value={reasonById[m.requestId] ?? ""}
                 onChange={(e) => setReasonById((s) => ({ ...s, [m.requestId]: e.target.value }))}
-                className="flex-1 px-2 py-1 bg-black/20 border border-ops-border text-ops-text text-xs"
+                className="flex-1 px-2 py-1 bg-ops-inset border border-ops-border text-ops-text text-xs"
               />
               <button
                 disabled={busy === m.requestId}
@@ -141,9 +146,10 @@ export function ModificationList({
             </div>
           )}
 
-          {(m.status === "approved" || m.status === "rejected") && (
-            <span className={`text-[11px] font-semibold ${m.status === "approved" ? "text-emerald-400" : "text-red-400"}`}>
-              {m.status === "approved" ? "Approved" : "Rejected"} by {m.decidedBy}
+          {(m.status === "approved" || m.status === "rejected" || m.status === "lapsed") && (
+            <span className={`text-[11px] font-semibold ${m.status === "approved" ? "text-emerald-400" : m.status === "lapsed" ? "text-amber-400" : "text-red-400"}`}>
+              {m.status === "approved" ? "Approved" : m.status === "lapsed" ? "Lapsed" : "Rejected"}
+              {m.status === "lapsed" ? "" : ` by ${m.decidedBy}`}
               {m.decisionReason ? ` — ${m.decisionReason}` : ""}
             </span>
           )}

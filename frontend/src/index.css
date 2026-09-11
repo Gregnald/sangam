@@ -1,20 +1,89 @@
 @import "tailwindcss";
 
-@theme {
-  --color-ops-bg: #0f1115;
-  --color-ops-panel: #161a20;
-  --color-ops-border: #262b33;
-  --color-ops-accent: #3b82f6;
-  --color-ops-text: #e5e7eb;
-  --color-ops-muted: #8b92a1;
+/* Every colour the UI uses comes from a token, and the tokens switch with
+ * `data-theme` on <html>. Tailwind utilities (bg-ops-panel, text-ops-muted…)
+ * resolve to these variables at use time, so a theme change is one
+ * attribute flip — no class juggling in components. */
+@theme inline {
+  --color-ops-bg: var(--ops-bg);
+  --color-ops-panel: var(--ops-panel);
+  --color-ops-border: var(--ops-border);
+  --color-ops-accent: var(--ops-accent);
+  --color-ops-text: var(--ops-text);
+  --color-ops-muted: var(--ops-muted);
+  /* Subtle recessed surface (inputs, Gantt tracks). Was bg-black/20. */
+  --color-ops-inset: var(--ops-inset);
+  /* Deeper recess (bars, popovers). Was bg-black/30 … /60. */
+  --color-ops-inset-strong: var(--ops-inset-strong);
+  /* Slightly raised / hovered surface. Was bg-white/5 … /10. */
+  --color-ops-raise: var(--ops-raise);
+  --color-ops-hover: var(--ops-hover);
+  /* Hairline on raised things (free windows, joint-block outlines). */
+  --color-ops-outline: var(--ops-outline);
+  /* Gantt: a free block window, and a timetabled train tick. */
+  --color-ops-window: var(--ops-window);
+  --color-ops-train: var(--ops-train);
+  --color-ops-highlight: var(--ops-highlight);
   --color-status-blocked: #dc2626;
   --color-status-running: #d97706;
   --color-status-clear: #16a34a;
 }
 
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ops-bg: #0f1115;
+  --ops-panel: #161a20;
+  --ops-border: #262b33;
+  --ops-accent: #3b82f6;
+  --ops-text: #e5e7eb;
+  --ops-muted: #8b92a1;
+  --ops-inset: rgba(0, 0, 0, 0.2);
+  --ops-inset-strong: rgba(0, 0, 0, 0.35);
+  --ops-raise: rgba(255, 255, 255, 0.05);
+  --ops-hover: rgba(255, 255, 255, 0.06);
+  --ops-outline: rgba(255, 255, 255, 0.45);
+  --ops-window: rgba(255, 255, 255, 0.07);
+  --ops-train: #22d3ee;
+  --ops-highlight: #fbbf24;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ops-bg: #f3f5f9;
+  --ops-panel: #ffffff;
+  --ops-border: #d7dce5;
+  --ops-accent: #2563eb;
+  --ops-text: #111827;
+  --ops-muted: #5b6474;
+  --ops-inset: rgba(15, 23, 42, 0.05);
+  --ops-inset-strong: rgba(15, 23, 42, 0.09);
+  --ops-raise: rgba(15, 23, 42, 0.04);
+  --ops-hover: rgba(15, 23, 42, 0.06);
+  --ops-outline: rgba(15, 23, 42, 0.45);
+  /* On a light ground a free window reads best as a white slot on a
+   * slightly darker track; trains need a deeper cyan to hold contrast. */
+  --ops-window: #ffffff;
+  --ops-train: #0891b2;
+  --ops-highlight: #d97706;
+
+  /* The status/accent shades were picked for a dark ground; on white the
+   * -300/-400 tints are too pale to read, so deepen them here. Tailwind
+   * utilities reference these variables, so `text-amber-400` follows. */
+  --color-emerald-400: #047857;
+  --color-amber-400: #b45309;
+  --color-amber-300: #b45309;
+  --color-amber-200: #92400e;
+  --color-red-400: #b91c1c;
+  --color-blue-400: #1d4ed8;
+}
+
 @layer base {
+  html {
+    background-color: var(--ops-bg);
+  }
   body {
-    @apply bg-slate-100 text-slate-900;
+    @apply bg-ops-bg text-ops-text;
     font-feature-settings: "tnum";
   }
   code, .mono {
