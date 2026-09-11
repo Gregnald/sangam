@@ -1,0 +1,34 @@
+# Version pins are lower-bound only: targets Python 3.11-3.13, and hard
+# pins risk landing on a release with no prebuilt wheel yet for a given
+# interpreter (numpy==1.26.4 has no cp313 Windows wheel, for example).
+
+# --- Web API ---
+fastapi>=0.115
+uvicorn[standard]>=0.34
+pydantic>=2.10
+pydantic-settings>=2.7
+python-dotenv>=1.0
+python-multipart>=0.0.20
+
+# --- Database ---
+SQLAlchemy>=2.0.36
+psycopg[binary]>=3.2
+
+# --- Data ---
+pandas>=2.2.3
+numpy>=1.26.4
+scipy>=1.14
+openpyxl>=3.1
+
+# --- ML / prioritization ---
+scikit-learn>=1.5
+xgboost>=2.1
+shap>=0.46
+statsmodels>=0.14.4
+
+# --- Optimization ---
+ortools>=9.11
+
+# --- Auth ---
+bcrypt>=4.2
+pyjwt>=2.10

@@ -1,13 +1,23 @@
 @import "tailwindcss";
 
 @theme {
-  --color-rail-dark: #1e293b;
-  --color-rail-light: #f8fafc;
-  --color-rail-accent: #0284c7;
+  --color-ops-bg: #0f1115;
+  --color-ops-panel: #161a20;
+  --color-ops-border: #262b33;
+  --color-ops-accent: #3b82f6;
+  --color-ops-text: #e5e7eb;
+  --color-ops-muted: #8b92a1;
+  --color-status-blocked: #dc2626;
+  --color-status-running: #d97706;
+  --color-status-clear: #16a34a;
 }
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900;
+    @apply bg-slate-100 text-slate-900;
+    font-feature-settings: "tnum";
+  }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
 }
