@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { CorridorPicker } from "./CorridorPicker";
 import { SnapshotGantt } from "./SnapshotGantt";
 import { ModificationList } from "./ModificationList";
 import { PlanPeriodBrowser } from "./PlanPeriodBrowser";
-import { fmtDate, periodLabelText, planTimeState } from "../lib/dates";
+import { fmtDate, periodLabelText, planTimeState, IST_TZ } from "../lib/dates";
 import { useAppStore } from "../store/appStore";
 import type { ModelVersion, ModificationRequest, PlanHistoryEntry } from "../types/api";
 import { BacklogHistory } from "./BacklogHistory";
@@ -21,13 +21,28 @@ interface SnapshotRow {
 function groupByPeriod(entries: PlanHistoryEntry[]): Map<string, PlanHistoryEntry[]> {
   const map = new Map<string, PlanHistoryEntry[]>();
   for (const e of entries) {
-    const key = `${e.horizonType}::${e.periodLabel}`;
+    const key = `${e.horizonType}::${e.periodLabel}::${e.zone ?? ""}`;
     const bucket = map.get(key);
     if (bucket) bucket.push(e);
     else map.set(key, [e]);
   }
   return map;
 }
+
+/** Every snapshot of one plan, oldest first. */
+function groupByPlan(entries: PlanHistoryEntry[]): PlanHistoryEntry[][] {
+  const map = new Map<string, PlanHistoryEntry[]>();
+  for (const e of entries) {
+    const bucket = map.get(e.planId);
+    if (bucket) bucket.push(e);
+    else map.set(e.planId, [e]);
+  }
+  return [...map.values()].map((es) => es.sort((a, b) => a.snapshotAt.localeCompare(b.snapshotAt)));
+}
+
+const SNAPSHOT_TONE: Record<string, string> = { proposed: "text-amber-400 border-amber-400/40", final: "text-emerald-400 border-emerald-400/40", rejected: "text-red-400 border-red-400/40" };
+const SNAPSHOT_LABEL: Record<string, string> = { proposed: "as proposed", final: "as approved", rejected: "rejected" };
+const PLAN_STATUS_TONE: Record<string, string> = { approved: "text-emerald-400", pending_approval: "text-amber-400", rejected: "text-red-400", superseded: "text-ops-muted" };
 
 function periodRange(entry: PlanHistoryEntry): { start: string; end: string } {
   const payload = (entry.payload as SnapshotRow[]) ?? [];
@@ -40,27 +55,57 @@ function periodRange(entry: PlanHistoryEntry): { start: string; end: string } {
   return { start: fmtDate(new Date(Math.min(...starts))), end: fmtDate(new Date(Math.max(...ends))) };
 }
 
-function SnapshotRowView({ entry }: { entry: PlanHistoryEntry }) {
+/** One plan: its versions (as proposed → as approved / rejected) as chips; expand to browse a version's schedule. */
+function PlanVersionsRow({ snapshots }: { snapshots: PlanHistoryEntry[] }) {
   const [open, setOpen] = useState(false);
+  const latest = snapshots[snapshots.length - 1];
+  const [selectedId, setSelectedId] = useState(latest.historyId);
   const [corridorId, setCorridorId] = useState<string | null>(null);
-  const payload = (entry.payload as SnapshotRow[]) ?? [];
-  const range = periodRange(entry);
+  const selected = snapshots.find((s) => s.historyId === selectedId) ?? latest;
+  const payload = (selected.payload as SnapshotRow[]) ?? [];
+  const range = periodRange(selected);
   const filtered = corridorId ? payload.filter((r) => r.corridor_id === corridorId) : [];
+  // Blocks per corridor in this version, so the picker lists the corridors
+  // that actually carry work first and says how much.
+  const blockCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const r of payload) counts[r.corridor_id] = (counts[r.corridor_id] ?? 0) + 1;
+    return counts;
+  }, [payload]);
+  const status = latest.planStatus ?? "";
+  const by = latest.approvedBy;
+  const when = latest.generatedAt ?? snapshots[0].snapshotAt;
 
   return (
     <div className="border border-ops-border">
-      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-ops-hover">
-        <span className="text-xs text-ops-text">
-          <span className={entry.snapshotType === "proposed" ? "text-amber-400" : entry.snapshotType === "rejected" ? "text-red-400" : "text-emerald-400"}>
-            {entry.snapshotType}
-          </span>{" "}
-          — {payload.length} block{payload.length === 1 ? "" : "s"}
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left hover:bg-ops-hover flex-wrap">
+        <span className="flex items-center gap-2 text-xs flex-wrap">
+          <span className="text-ops-muted mono text-[10px]">{new Date(when).toLocaleString(undefined, { timeZone: IST_TZ, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+          <span className={`text-[10px] uppercase font-semibold ${PLAN_STATUS_TONE[status] ?? "text-ops-muted"}`}>{status.replace(/_/g, " ")}</span>
+          {by && <span className="text-[10px] text-ops-muted">{by === "system" ? "auto (overdue sweep)" : `by ${by}`}</span>}
+          {snapshots.map((s) => {
+            const n = ((s.payload as SnapshotRow[]) ?? []).length;
+            return (
+              <span
+                key={s.historyId}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedId(s.historyId);
+                  setOpen(true);
+                }}
+                className={`text-[10px] border px-1.5 py-px ${SNAPSHOT_TONE[s.snapshotType] ?? "text-ops-muted border-ops-border"} ${open && s.historyId === selectedId ? "bg-ops-hover" : ""}`}
+                title={new Date(s.snapshotAt).toLocaleString(undefined, { timeZone: IST_TZ })}
+              >
+                {SNAPSHOT_LABEL[s.snapshotType] ?? s.snapshotType} · {n} block{n === 1 ? "" : "s"}
+              </span>
+            );
+          })}
         </span>
-        <span className="text-[10px] text-ops-muted mono">{new Date(entry.snapshotAt).toLocaleString()}</span>
+        <span className="text-ops-muted text-[10px]">{open ? "▲" : "▼"}</span>
       </button>
       {open && (
         <div className="p-3 space-y-2 bg-ops-inset">
-          <CorridorPicker zone={null} value={corridorId} onChange={setCorridorId} />
+          <CorridorPicker zone={latest.zone} value={corridorId} onChange={setCorridorId} lockZone={Boolean(latest.zone)} blockCounts={blockCounts} />
           {corridorId ? (
             <SnapshotGantt rows={filtered} rangeStart={range.start} rangeEnd={range.end} />
           ) : (
@@ -74,23 +119,31 @@ function SnapshotRowView({ entry }: { entry: PlanHistoryEntry }) {
 
 function PeriodCard({ periodKey, entries, isCurrentlyActive }: { periodKey: string; entries: PlanHistoryEntry[]; isCurrentlyActive: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const [horizonType, periodLabel] = periodKey.split("::");
-  const sorted = [...entries].sort((a, b) => b.snapshotAt.localeCompare(a.snapshotAt));
+  const [horizonType, periodLabel, zone] = periodKey.split("::");
+  // Newest plan first; each row is one plan with all its versions.
+  const plans = groupByPlan(entries).sort((a, b) => b[0].snapshotAt.localeCompare(a[0].snapshotAt));
+  const live = plans.find((p) => p[p.length - 1].planStatus === "approved");
+  const liveBlocks = live ? ((live[live.length - 1].payload as SnapshotRow[]) ?? []).length : 0;
 
   return (
     <div className="border border-ops-border">
       <button onClick={() => setExpanded((e) => !e)} className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-ops-hover">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <span className="text-xs font-semibold text-ops-text" title={periodLabel}>{periodLabelText(horizonType, periodLabel)}</span>
+          {zone && <span className="text-xs font-semibold mono text-ops-text">{zone}</span>}
           <span className="text-[10px] text-ops-muted uppercase">{horizonType}</span>
           {isCurrentlyActive && <span className="text-[10px] font-semibold text-emerald-400 border border-emerald-400/40 px-1.5 py-0.5">CURRENTLY ACTIVE</span>}
+          <span className="text-[10px] text-ops-muted">
+            {plans.length} plan{plans.length === 1 ? "" : "s"}
+            {live ? ` · live: ${liveBlocks} block${liveBlocks === 1 ? "" : "s"}` : ""}
+          </span>
         </div>
         <span className="text-ops-muted text-[10px]">{expanded ? "▲" : "▼"}</span>
       </button>
       {expanded && (
         <div className="border-t border-ops-border p-2 space-y-1.5">
-          {sorted.map((e) => (
-            <SnapshotRowView key={e.historyId} entry={e} />
+          {plans.map((snapshots) => (
+            <PlanVersionsRow key={snapshots[0].planId} snapshots={snapshots} />
           ))}
         </div>
       )}
@@ -100,6 +153,9 @@ function PeriodCard({ periodKey, entries, isCurrentlyActive }: { periodKey: stri
 
 const SUB_TABS = ["Plans", "Backlog", "Modifications", "Model versions"] as const;
 type SubTab = (typeof SUB_TABS)[number];
+// A department sees what happened to its own work; model versions and the
+// controller's rejected / superseded drafts are controller business.
+const DEPT_SUB_TABS: readonly SubTab[] = ["Plans", "Backlog", "Modifications"];
 
 function ModelVersions() {
   const [versions, setVersions] = useState<ModelVersion[]>([]);
@@ -129,7 +185,7 @@ function ModelVersions() {
             )}
             {versions.map((v) => (
               <tr key={v.versionId}>
-                <td className="p-2 text-ops-muted mono whitespace-nowrap">{new Date(v.trainedAt).toLocaleString()}</td>
+                <td className="p-2 text-ops-muted mono whitespace-nowrap">{new Date(v.trainedAt).toLocaleString(undefined, { timeZone: IST_TZ })}</td>
                 <td className="p-2 text-ops-text mono">{typeof v.metrics?.holdout_spearman === "number" ? (v.metrics.holdout_spearman as number).toFixed(3) : "—"}</td>
                 <td className="p-2 text-ops-text mono">{String(v.metrics?.n_controller_decisions_used ?? "—")}</td>
                 <td className={`p-2 font-semibold ${v.promoted ? "text-emerald-400" : "text-ops-muted"}`}>{v.promoted ? "IN USE" : "challenger"}</td>
@@ -162,21 +218,25 @@ export function HistoryPanel({ scope }: { scope: "own" | "all" }) {
   const groups = Array.from(groupByPeriod(entries).entries()).sort((a, b) => b[0].localeCompare(a[0]));
 
   const activePeriodKeys = new Set(
-    plans.filter((p) => p.status === "approved" && planTimeState(p.horizonStart, p.horizonEnd) !== "past").map((p) => `${p.horizonType}::${p.periodLabel}`)
+    plans.filter((p) => p.status === "approved" && planTimeState(p.horizonStart, p.horizonEnd) !== "past").map((p) => `${p.horizonType}::${p.periodLabel}::${p.zone ?? ""}`)
   );
 
   // Rejected, superseded, or approved-but-already-over — everything that
   // isn't live or awaiting a decision belongs here rather than cluttering
   // the Plans tab, which only shows what's still actionable.
   const isDone = (p: (typeof plans)[number]) =>
-    p.status === "rejected" || p.status === "superseded" || (p.status === "approved" && planTimeState(p.horizonStart, p.horizonEnd) === "past");
+    scope === "all"
+      ? p.status === "rejected" || p.status === "superseded" || (p.status === "approved" && planTimeState(p.horizonStart, p.horizonEnd) === "past")
+      : p.status === "approved" && planTimeState(p.horizonStart, p.horizonEnd) === "past";
+  const tabs = scope === "all" ? SUB_TABS : DEPT_SUB_TABS;
+  const pastTitle = (h: string) => (scope === "all" ? `Past, rejected & superseded ${h} plans` : `Past ${h} plans`);
   const pastMonthly = plans.filter((p) => p.horizonType === "monthly" && isDone(p)).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
   const pastWeekly = plans.filter((p) => p.horizonType === "weekly" && isDone(p)).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-1 border-b border-ops-border">
-        {SUB_TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setSub(t)}
@@ -189,9 +249,7 @@ export function HistoryPanel({ scope }: { scope: "own" | "all" }) {
 
       {sub === "Backlog" && <BacklogHistory scope={scope} />}
       {sub === "Model versions" && <ModelVersions />}
-      {sub === "Modifications" && (
-        <ModificationList items={decided} mode="controller" />
-      )}
+      {sub === "Modifications" && <ModificationList items={decided} mode={scope === "all" ? "controller" : "dept"} />}
 
       {sub === "Plans" && (
       <div className="space-y-6">
@@ -206,7 +264,7 @@ export function HistoryPanel({ scope }: { scope: "own" | "all" }) {
       </div>
 
       <PlanPeriodBrowser
-        title="Past, rejected & superseded monthly plans"
+        title={pastTitle("monthly")}
         horizon="monthly"
         plans={pastMonthly}
         weeklyPlans={plans.filter((wp) => wp.horizonType === "weekly")}
@@ -215,7 +273,7 @@ export function HistoryPanel({ scope }: { scope: "own" | "all" }) {
         emptyText="No past monthly plans."
       />
       <PlanPeriodBrowser
-        title="Past, rejected & superseded weekly plans"
+        title={pastTitle("weekly")}
         horizon="weekly"
         plans={pastWeekly}
         weeklyPlans={plans.filter((wp) => wp.horizonType === "weekly")}

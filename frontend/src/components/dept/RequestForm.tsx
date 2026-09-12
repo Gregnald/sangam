@@ -49,7 +49,9 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
       let requestedWindowEnd: string | undefined;
       if (preferredDate && preferredTime) {
         // Local (IST) wall-clock time as the department typed it — a trailing "Z" would silently shift it by 5h30m.
-        const start = new Date(`${preferredDate}T${preferredTime}:00`);
+        // The department is asking for an IST wall-clock time, whatever the
+        // browser's zone happens to be.
+        const start = new Date(`${preferredDate}T${preferredTime}:00+05:30`);
         const end = new Date(start.getTime() + hours * 3_600_000);
         requestedWindowStart = start.toISOString();
         requestedWindowEnd = end.toISOString();
@@ -152,7 +154,7 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
             <input type="date" value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)} className="w-full px-2 py-1.5 bg-ops-inset border border-ops-border text-ops-text text-sm" />
           </div>
           <div>
-            <label className="block text-xs text-ops-muted mb-1">Preferred start (UTC)</label>
+            <label className="block text-xs text-ops-muted mb-1">Preferred start (IST)</label>
             <input type="time" value={preferredTime} onChange={(e) => setPreferredTime(e.target.value)} className="w-full px-2 py-1.5 bg-ops-inset border border-ops-border text-ops-text text-sm" />
           </div>
         </div>

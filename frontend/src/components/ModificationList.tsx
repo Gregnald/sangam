@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CorridorGantt } from "./CorridorGantt";
-import { fmtDate, mondayOf } from "../lib/dates";
+import { fmtDate, mondayOf, IST_TZ } from "../lib/dates";
 import type { ModificationRequest } from "../types/api";
 
 const TYPE_LABEL: Record<string, string> = { reschedule: "Reschedule offer", preemption: "Priority bump request" };
@@ -16,10 +16,10 @@ function DiffLine({ m }: { m: ModificationRequest }) {
   if (m.originalWindowStart && m.proposedWindowStart) {
     return (
       <p className="text-[11px] text-amber-300 mb-2">
-        Originally requested: {new Date(m.originalWindowStart).toLocaleString()}
-        {m.originalWindowEnd ? ` – ${new Date(m.originalWindowEnd).toLocaleTimeString()}` : ""} → Proposed instead:{" "}
-        {new Date(m.proposedWindowStart).toLocaleString()}
-        {m.proposedWindowEnd ? ` – ${new Date(m.proposedWindowEnd).toLocaleTimeString()}` : ""}
+        Originally requested: {new Date(m.originalWindowStart).toLocaleString(undefined, { timeZone: IST_TZ })}
+        {m.originalWindowEnd ? ` – ${new Date(m.originalWindowEnd).toLocaleTimeString([], { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit" })}` : ""} → Proposed instead:{" "}
+        {new Date(m.proposedWindowStart).toLocaleString(undefined, { timeZone: IST_TZ })}
+        {m.proposedWindowEnd ? ` – ${new Date(m.proposedWindowEnd).toLocaleTimeString([], { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit" })}` : ""}
       </p>
     );
   }
@@ -56,12 +56,12 @@ export function ModificationList({
         <div key={m.requestId} className="border border-ops-border p-3">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold text-ops-text">{TYPE_LABEL[m.requestType]}</span>
-            <span className="text-[10px] text-ops-muted">{new Date(m.createdAt).toLocaleString()}</span>
+            <span className="text-[10px] text-ops-muted">{new Date(m.createdAt).toLocaleString(undefined, { timeZone: IST_TZ })}</span>
           </div>
           <p className="text-xs text-ops-muted mb-2">{m.description}</p>
           <div className="text-[11px] text-ops-muted mb-2">
             {m.requestingDepartment} · {m.proposedCorridorId}
-            {m.proposedWindowStart && <> · {new Date(m.proposedWindowStart).toLocaleString()}</>}
+            {m.proposedWindowStart && <> · {new Date(m.proposedWindowStart).toLocaleString(undefined, { timeZone: IST_TZ })}</>}
             {canExpand && (
               <button onClick={() => setExpanded(isOpen ? null : m.requestId)} className="ml-2 text-ops-accent underline">
                 {isOpen ? "hide schedule" : "view schedule"}

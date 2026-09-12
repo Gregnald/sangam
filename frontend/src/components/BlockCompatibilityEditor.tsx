@@ -3,7 +3,7 @@ import { CorridorPicker } from "./CorridorPicker";
 import { LearnedCompatibility } from "./LearnedCompatibility";
 import { WorkTypeMatrix } from "./WorkTypeMatrix";
 import { api, qs } from "../lib/api";
-import { todayIso } from "../lib/dates";
+import { todayIso, IST_TZ } from "../lib/dates";
 import type { CompatibilityOverrideEntry, CorridorBlockWindow, CorridorSchedule } from "../types/api";
 
 export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
@@ -73,7 +73,7 @@ export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
           <option value="">{windows.length === 0 ? "No block windows on this day" : "Select a block…"}</option>
           {windows.map((w) => (
             <option key={w.windowId} value={w.windowId}>
-              {new Date(w.windowStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} – {new Date(w.windowEnd).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (max {w.maxConcurrentDepts} depts)
+              {new Date(w.windowStart).toLocaleTimeString([], { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit" })} – {new Date(w.windowEnd).toLocaleTimeString([], { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit" })} (max {w.maxConcurrentDepts} depts)
             </option>
           ))}
         </select>

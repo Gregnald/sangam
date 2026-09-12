@@ -190,7 +190,14 @@ export interface CorridorBlockWindow {
 
 export interface ScheduleAssignment {
   assignmentId: string;
+  planId: string | null;
   defectId: string | null;
+  /** Controller's per-block verdict while the plan is pending: "accepted" (rejected blocks are removed). */
+  decision: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  deferCount: number | null;
+  detectedDate: string | null;
   department: Department;
   allocatedStart: string;
   allocatedEnd: string;
@@ -229,6 +236,8 @@ export interface SchedulePendingRequest {
   requestedWindowEnd: string | null;
   priorityScore: number | null;
   workflowStatus: WorkflowStatus;
+  dueDate: string | null;
+  isOverdue: boolean;
 }
 
 export interface GoodsForecastBand {
@@ -343,5 +352,9 @@ export interface PlanHistoryEntry {
   snapshotType: "proposed" | "final" | "rejected";
   snapshotAt: string;
   payload: unknown;
+  zone: string | null;
+  planStatus: string | null;
+  approvedBy: string | null;
+  generatedAt: string | null;
 }
 

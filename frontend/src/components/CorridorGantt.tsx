@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
-import { api, qs } from "../lib/api";
-import type { CorridorSchedule, ScheduleAssignment } from "../types/api";
+import { api, ApiError, qs } from "../lib/api";
+import { fmtDate, fmtDateTimeIST, fmtTimeIST, istDateKey, istMinuteOfDay } from "../lib/dates";
+import { useAppStore } from "../store/appStore";
+import { useAuthStore } from "../store/authStore";
+import { HourGrid, TimeAxis } from "./GanttAxis";
+import type { CorridorSchedule, ScheduleAssignment, SchedulePendingRequest } from "../types/api";
 
 const DEPT_COLOR: Record<string, string> = { ENGG: "#2563eb", SIGNAL: "#9333ea", TRD: "#ea580c" };
 const DEPT_LABEL: Record<string, string> = { ENGG: "Engineering", SIGNAL: "Signal & Telecom", TRD: "Traction Distribution" };
@@ -26,17 +30,9 @@ const REQUESTED_HATCH = "repeating-linear-gradient(45deg, #fbbf24 0 4px, rgba(25
 // under the free windows so a "free" gap that's been clipped reads as such.
 const GOODS_HATCH = "repeating-linear-gradient(-45deg, rgba(239,68,68,0.55) 0 3px, rgba(239,68,68,0.12) 3px 7px)";
 
-function dateKey(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function minuteOfDay(iso: string): number {
-  const d = new Date(iso);
-  return d.getHours() * 60 + d.getMinutes();
-}
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
+const dateKey = istDateKey;
+const minuteOfDay = istMinuteOfDay;
+const fmtTime = fmtTimeIST;
 function widthPct(startIso: string, endIso: string): number {
   const mins = (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000;
   return Math.max((mins / 1440) * 100, 0.6);
@@ -116,6 +112,7 @@ export function CorridorGantt({
   highlightWindowEnd,
   highlightLabel,
   highlightKind = "proposed",
+  highlightDefectId,
   planId,
 }: {
   corridorId: string;
@@ -127,10 +124,16 @@ export function CorridorGantt({
   highlightLabel?: string | null;
   /** "proposed": an empty slot a pending request would occupy. "own": an existing block being pointed at. */
   highlightKind?: "proposed" | "own";
+  /** The request whose own bar is outlined (kind "own"); other jobs sharing the possession are left alone. */
+  highlightDefectId?: string | null;
   planId?: string | null;
 }) {
   const [data, setData] = useState<CorridorSchedule | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [selected, setSelected] = useState<ScheduleAssignment | null>(null);
+  const role = useAuthStore((s) => s.role);
+  const bumpPlanRevision = useAppStore((s) => s.bumpPlanRevision);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,22 +145,40 @@ export function CorridorGantt({
     return () => {
       cancelled = true;
     };
-  }, [corridorId, rangeStart, rangeEnd, planId]);
+  }, [corridorId, rangeStart, rangeEnd, planId, reloadKey]);
 
   if (loading) return <p className="text-xs text-ops-muted p-3">Loading schedule…</p>;
   if (!data) return null;
 
+  // Calendar days of the range (local midnight → date parts, never via UTC).
   const days: string[] = [];
   const cursor = new Date(rangeStart + "T00:00:00");
   const end = new Date(rangeEnd + "T00:00:00");
   while (cursor <= end) {
-    days.push(dateKey(cursor.toISOString()));
+    days.push(fmtDate(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
-
   const highlightDay = highlightWindowStart ? dateKey(highlightWindowStart) : null;
-  const backlogNoTime = data.pendingRequests.filter((p) => !p.requestedWindowStart);
   const todayKey = dateKey(new Date().toISOString());
+  const firstOpenDay = days.find((d) => d >= todayKey) ?? days[0];
+
+  // Which row a pending request belongs on. A pinned request sits on the
+  // day it asked for. An unpinned one is due by its due date, so it sits
+  // there, drawn in the earliest free window that could take it — an
+  // indication of where it could go, not a placement. Only a request that is
+  // already overdue is pulled forward to the first open day (any day is
+  // better than none); one due before or after these days belongs to
+  // another week and is listed, not drawn.
+  const pendingDay = (p: SchedulePendingRequest): string | null => {
+    if (p.requestedWindowStart) return dateKey(p.requestedWindowStart);
+    if (!p.dueDate) return null;
+    if (p.isOverdue && p.dueDate < days[0]) return firstOpenDay;
+    if (p.dueDate < days[0] || p.dueDate > days[days.length - 1]) return null;
+    return p.dueDate;
+  };
+  const backlogElsewhere = data.pendingRequests.filter((p) => pendingDay(p) === null);
+  const canDecide = (a: ScheduleAssignment) => role === "CONTROLLER" && a.planStatus === "pending_approval" && Boolean(a.planId);
+  const anyAccepted = data.assignments.some((a) => a.decision === "accepted");
 
   return (
     <div className="border border-ops-border">
@@ -173,6 +194,11 @@ export function CorridorGantt({
         {planId && (
           <span className="flex items-center gap-1">
             <span className="w-2.5 h-2.5 inline-block border border-dashed border-blue-400" style={{ background: "rgba(37,99,235,0.35)" }} /> Proposed (not yet approved)
+          </span>
+        )}
+        {anyAccepted && (
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 inline-block ring-2 ring-emerald-400" /> Accepted by controller
           </span>
         )}
         <span className="flex items-center gap-1">
@@ -192,9 +218,9 @@ export function CorridorGantt({
         <span className="flex items-center gap-1">
           <span className="w-2.5 h-2.5 inline-block border border-ops-border" style={{ background: SHORT_GAP_STYLE }} /> Gap too short for a block (&lt;{MIN_BLOCK_MIN} min)
         </span>
-        {highlightWindowStart && (
+        {(highlightWindowStart || highlightDefectId) && (
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 inline-block border-2 border-ops-highlight" /> {highlightLabel ?? (highlightKind === "own" ? "This block" : "Proposed slot for this request")}
+            <span className="w-2.5 h-2.5 inline-block ring-2 ring-ops-highlight" /> {highlightLabel ?? (highlightKind === "own" ? "This job" : "Proposed slot for this request")}
           </span>
         )}
         {data.goodsForecasts.length > 0 && (
@@ -203,13 +229,15 @@ export function CorridorGantt({
           </span>
         )}
       </div>
+      <TimeAxis labelWidth="w-28" />
       <div className="divide-y divide-ops-border">
         {days.map((day) => {
           const dayWindows = data.windows.filter((w) => dateKey(w.windowStart) === day);
           const dayAssignments = data.assignments.filter((a) => dateKey(a.allocatedStart) === day);
           const { lanes, count: laneCount } = assignLanes(dayAssignments);
           const laneH = 24 / laneCount;
-          const dayPending = data.pendingRequests.filter((p) => p.requestedWindowStart && dateKey(p.requestedWindowStart) === day);
+          const dayPending = data.pendingRequests.filter((p) => pendingDay(p) === day);
+          const sortedWindows = [...dayWindows].sort((a, b) => a.windowStart.localeCompare(b.windowStart));
           const dayGoods = data.goodsForecasts.filter((g) => dateKey(g.bandStart) === day);
           const isHighlightDay = day === highlightDay;
           const isPast = day < todayKey;
@@ -228,6 +256,7 @@ export function CorridorGantt({
                 {new Date(day + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
               </span>
               <div className="relative flex-1 h-8 bg-ops-inset-strong border border-ops-border/60">
+                <HourGrid />
                 {!hasCalendar && (
                   <div
                     className="absolute inset-0 flex items-center justify-center text-[11px] text-ops-muted"
@@ -275,15 +304,17 @@ export function CorridorGantt({
                     />
                   ))}
                 {dayAssignments.map((a) => {
-                  const isHighlight =
-                    isHighlightDay && highlightWindowStart && Math.abs(new Date(a.allocatedStart).getTime() - new Date(highlightWindowStart).getTime()) < 60000;
+                  const isHighlight = highlightDefectId
+                    ? a.defectId === highlightDefectId
+                    : isHighlightDay && highlightWindowStart && Math.abs(new Date(a.allocatedStart).getTime() - new Date(highlightWindowStart).getTime()) < 60000;
                   const isProposed = a.planStatus && a.planStatus !== "approved";
                   const partners = a.jointBlockGroupId ? dayAssignments.filter((o) => o.jointBlockGroupId === a.jointBlockGroupId && o.assignmentId !== a.assignmentId) : [];
                   const lane = lanes.get(a.assignmentId) ?? 0;
                   return (
                     <div
                       key={a.assignmentId}
-                      className={`absolute ${isHighlight ? "ring-2 ring-amber-400" : ""} ${isProposed ? "border border-dashed border-ops-outline opacity-60" : ""} ${partners.length ? "outline outline-1 outline-ops-outline" : ""}`}
+                      onClick={() => setSelected((s) => (s?.assignmentId === a.assignmentId ? null : a))}
+                      className={`absolute cursor-pointer ${isHighlight ? "ring-2 ring-ops-highlight z-10" : ""} ${a.decision === "accepted" ? "ring-2 ring-emerald-400 z-10" : ""} ${selected?.assignmentId === a.assignmentId ? "ring-2 ring-ops-text z-20" : ""} ${isProposed ? "border border-dashed border-ops-outline opacity-60" : ""} ${partners.length && !isHighlight ? "outline outline-1 outline-ops-outline" : ""}`}
                       style={{
                         left: `${(minuteOfDay(a.allocatedStart) / 1440) * 100}%`,
                         width: `${widthPct(a.allocatedStart, a.allocatedEnd)}%`,
@@ -295,24 +326,34 @@ export function CorridorGantt({
                     />
                   );
                 })}
-                {dayPending.map((p) =>
-                  p.requestedWindowStart && p.requestedWindowEnd ? (
+                {dayPending.map((p, i) => {
+                  const label = `${p.department} · ${p.defectType.replace(/_/g, " ")} · Sev ${p.severityCode} · ${p.estimatedBlockHours.toFixed(2)} h${p.priorityScore != null ? ` · priority ${p.priorityScore.toFixed(0)}` : ""} · due ${fmtDue(p.dueDate)}${p.isOverdue ? " (OVERDUE)" : ""}`;
+                  if (p.requestedWindowStart && p.requestedWindowEnd) {
+                    return (
+                      <div
+                        key={p.defectId}
+                        className="absolute top-0.5 h-5 border border-amber-400/70"
+                        style={{ left: `${(minuteOfDay(p.requestedWindowStart) / 1440) * 100}%`, width: `${widthPct(p.requestedWindowStart, p.requestedWindowEnd)}%`, background: REQUESTED_HATCH }}
+                        title={`Requested (not yet placed) at the time asked for: ${label} · ${fmtTime(p.requestedWindowStart)}–${fmtTime(p.requestedWindowEnd)}`}
+                      />
+                    );
+                  }
+                  const mins = Math.round(p.estimatedBlockHours * 60);
+                  const fit = sortedWindows.find((w) => (new Date(w.windowEnd).getTime() - new Date(w.windowStart).getTime()) / 60000 >= mins);
+                  const left = fit ? minuteOfDay(fit.windowStart) : 0;
+                  return (
                     <div
                       key={p.defectId}
-                      className="absolute top-0.5 h-5 border border-amber-400/70"
-                      style={{ left: `${(minuteOfDay(p.requestedWindowStart) / 1440) * 100}%`, width: `${widthPct(p.requestedWindowStart, p.requestedWindowEnd)}%`, background: REQUESTED_HATCH }}
-                      title={`Requested: ${p.department} · ${p.defectType.replace(/_/g, " ")} · ${fmtTime(p.requestedWindowStart)}–${fmtTime(p.requestedWindowEnd)}`}
+                      className={`absolute h-2 border ${fit ? "border-amber-400/70" : "border-red-400"}`}
+                      style={{ top: `${1 + (i % 3) * 3}px`, left: `${(left / 1440) * 100}%`, width: `${Math.max((mins / 1440) * 100, 0.6)}%`, background: REQUESTED_HATCH }}
+                      title={
+                        fit
+                          ? `Requested (not yet placed): ${label} · could take the free window from ${fmtTime(fit.windowStart)} — indicative, not scheduled`
+                          : `Requested (not yet placed): ${label} · no free window on this day is long enough`
+                      }
                     />
-                  ) : null
-                )}
-                {isHighlightDay && highlightWindowStart && highlightWindowEnd && highlightKind === "own" && (
-                  // Outline only — the bar underneath is the block itself; a
-                  // label on top would just cover it.
-                  <div
-                    className="absolute -top-0.5 -bottom-0.5 border-2 border-ops-highlight pointer-events-none"
-                    style={{ left: `${(minuteOfDay(highlightWindowStart) / 1440) * 100}%`, width: `${widthPct(highlightWindowStart, highlightWindowEnd)}%` }}
-                  />
-                )}
+                  );
+                })}
                 {isHighlightDay && highlightWindowStart && highlightWindowEnd && highlightKind === "proposed" && (
                   <div
                     className="absolute top-0 h-full border-2 border-ops-highlight bg-ops-highlight/10 overflow-hidden whitespace-nowrap text-[11px] leading-7 px-1.5 text-ops-text"
@@ -327,16 +368,119 @@ export function CorridorGantt({
           );
         })}
       </div>
-      {backlogNoTime.length > 0 && (
+      {selected && (
+        <BlockDetail
+          a={selected}
+          partners={selected.jointBlockGroupId ? data.assignments.filter((o) => o.jointBlockGroupId === selected.jointBlockGroupId && o.assignmentId !== selected.assignmentId) : []}
+          canDecide={canDecide(selected)}
+          onClose={() => setSelected(null)}
+          onDecided={() => {
+            setSelected(null);
+            setReloadKey((k) => k + 1);
+            bumpPlanRevision();
+            useAppStore.getState().fetchRequests();
+          }}
+        />
+      )}
+      {backlogElsewhere.length > 0 && (
         <div className="px-3 py-2 border-t border-ops-border">
-          <p className="text-[11px] text-ops-muted mb-1">Unplaced backlog on this corridor:</p>
+          <p className="text-[11px] text-ops-muted mb-1">Also requested on this corridor, due outside these days:</p>
           <div className="flex flex-wrap gap-1.5">
-            {backlogNoTime.map((p) => (
-              <span key={p.defectId} className="text-[11px] px-1.5 py-0.5 bg-amber-400/20 text-amber-300">
-                {p.department} · {p.defectType.replace(/_/g, " ")}
+            {backlogElsewhere.map((p) => (
+              <span key={p.defectId} className="text-[11px] px-1.5 py-0.5 bg-amber-400/20 text-amber-300" title={`${p.estimatedBlockHours.toFixed(2)} h · due ${fmtDue(p.dueDate)}`}>
+                {p.department} · {p.defectType.replace(/_/g, " ")} · due {fmtDue(p.dueDate)}
               </span>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wide text-ops-muted">{k}</p>
+      <p className="text-[11px] text-ops-text mono truncate">{v}</p>
+    </div>
+  );
+}
+
+/** Everything about one block, and — while its plan is still a proposal — the controller's accept / reject for just that block. */
+function BlockDetail({ a, partners, canDecide, onClose, onDecided }: { a: ScheduleAssignment; partners: ScheduleAssignment[]; canDecide: boolean; onClose: () => void; onDecided: () => void }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isProposed = a.planStatus && a.planStatus !== "approved";
+
+  async function decide(approve: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/api/v1/plans/assignments/${a.assignmentId}/decision`, { approve, reason: reason.trim() || null });
+      onDecided();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-ops-border bg-ops-inset px-3 py-2 space-y-2">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs font-semibold" style={{ color: DEPT_COLOR[a.department] }}>{DEPT_LABEL[a.department] ?? a.department}</span>
+        <span className="text-xs text-ops-text">{(a.defectType ?? "").replace(/_/g, " ")}</span>
+        <span className={`text-[11px] font-semibold ${a.severityCode === "A" ? "text-red-400" : a.severityCode === "B" ? "text-amber-400" : "text-emerald-400"}`}>Sev {a.severityCode ?? "?"}</span>
+        {a.decision === "accepted" ? (
+          <span className="text-[10px] font-semibold uppercase text-emerald-400 border border-emerald-400/40 px-1.5 py-px">Accepted{a.decidedBy ? ` by ${a.decidedBy}` : ""}</span>
+        ) : isProposed ? (
+          <span className="text-[10px] font-semibold uppercase text-amber-400 border border-amber-400/40 px-1.5 py-px">Proposed — awaiting approval</span>
+        ) : (
+          <span className="text-[10px] font-semibold uppercase text-emerald-400">Approved</span>
+        )}
+        {a.rescheduledAt && <span className="text-[10px] font-semibold uppercase text-blue-400 border border-blue-400/40 px-1.5 py-px">Rescheduled</span>}
+        <button onClick={onClose} className="ml-auto text-[11px] text-ops-muted hover:text-ops-text">close ✕</button>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-x-4 gap-y-1.5">
+        <Field k="Block" v={`${fmtDateTimeIST(a.allocatedStart)} – ${fmtTime(a.allocatedEnd)}`} />
+        <Field k="Duration" v={`${a.estimatedBlockHours != null ? a.estimatedBlockHours.toFixed(2) : ((new Date(a.allocatedEnd).getTime() - new Date(a.allocatedStart).getTime()) / 3.6e6).toFixed(2)} h`} />
+        <Field k="Due" v={a.dueDate ?? "—"} />
+        <Field k="Priority" v={a.priorityScore != null ? `${a.priorityScore.toFixed(0)} / 100` : "—"} />
+        <Field k="Speed restriction" v={a.speedRestrictionKmph != null ? `${a.speedRestrictionKmph} km/h` : "none"} />
+        <Field k="Request" v={a.defectId ? <span title={a.defectId}>#{a.defectId.slice(0, 8).toUpperCase()}</span> : "—"} />
+        <Field k="Asset" v={a.assetId ?? "—"} />
+        <Field k="Source" v={a.sourceSystem ? SOURCE_LABEL[a.sourceSystem] ?? a.sourceSystem : "—"} />
+        <Field k="Requested by" v={a.requestedBy ?? "—"} />
+        <Field k="Detected" v={a.detectedDate ?? "—"} />
+        <Field k="Deferred" v={a.deferCount ? `${a.deferCount}×` : "never"} />
+        <Field k="Plan" v={a.planPeriodLabel ?? "—"} />
+      </div>
+      {partners.length > 0 && (
+        <p className="text-[11px] text-ops-muted">
+          Shares the possession with{" "}
+          {partners.map((p, i) => (
+            <span key={p.assignmentId}>
+              {i > 0 ? ", " : ""}
+              <span className="font-semibold" style={{ color: DEPT_COLOR[p.department] }}>{p.department}</span> {(p.defectType ?? "").replace(/_/g, " ")} {fmtTime(p.allocatedStart)}–{fmtTime(p.allocatedEnd)}
+            </span>
+          ))}
+        </p>
+      )}
+      {canDecide && a.decision !== "accepted" && (
+        <div className="flex items-center gap-2 flex-wrap pt-1">
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (optional)" className="text-[11px] bg-ops-panel border border-ops-border text-ops-text px-2 py-1 w-64" />
+          <button disabled={busy} onClick={() => decide(true)} className="px-2.5 py-1 bg-emerald-600 text-white text-[11px] disabled:opacity-50">Accept block</button>
+          <button disabled={busy} onClick={() => decide(false)} className="px-2.5 py-1 border border-red-400/60 text-red-400 text-[11px] disabled:opacity-50">Reject block</button>
+          {partners.some((p) => p.department !== a.department) && <span className="text-[10px] text-ops-muted">also recorded as a compatibility decision for its partners</span>}
+          {error && <span className="text-[11px] text-red-400">{error}</span>}
+        </div>
+      )}
+      {canDecide && a.decision === "accepted" && (
+        <div className="flex items-center gap-2 flex-wrap pt-1">
+          <button disabled={busy} onClick={() => decide(false)} className="px-2.5 py-1 border border-red-400/60 text-red-400 text-[11px] disabled:opacity-50">Reject block</button>
+          {error && <span className="text-[11px] text-red-400">{error}</span>}
         </div>
       )}
     </div>

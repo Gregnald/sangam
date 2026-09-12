@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { WeeklyPlanView } from "./WeeklyPlanView";
 import { PlanKpiPanel } from "./PlanKpiPanel";
+import { useAppStore } from "../store/appStore";
 import { fmtDate, mondayOf, planPeriodLabel } from "../lib/dates";
 import type { BlockPlan } from "../types/api";
 
@@ -35,6 +36,7 @@ export function MonthPlanCard({
   activeLabel?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const planRevision = useAppStore((s) => s.planRevision);
   const monthStart = new Date(plan.horizonStart + "T00:00:00");
   const monthEnd = new Date(plan.horizonEnd + "T00:00:00");
 
@@ -99,7 +101,7 @@ export function MonthPlanCard({
       {expanded && (
         <div className="border-t border-ops-border divide-y divide-ops-border">
           <div className="p-3">
-            <PlanKpiPanel planId={plan.planId} refreshKey={plan.status} />
+            <PlanKpiPanel planId={plan.planId} refreshKey={`${plan.status}:${planRevision}`} />
           </div>
           {weeks.map((w) => {
             const state = weekState(w.start, w.end);

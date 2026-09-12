@@ -1,6 +1,7 @@
+import { IST_TZ } from "../lib/dates";
 import { useMemo, useState } from "react";
 import type { DefectRequest } from "../types/api";
-import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, displayStatus, isRescheduled, type DisplayStatus } from "../lib/requestStatus";
+import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, displayStatus, isRescheduled, shortId, type DisplayStatus } from "../lib/requestStatus";
 
 const SEV_COLOR: Record<string, string> = { A: "text-red-400", B: "text-amber-400", C: "text-emerald-400" };
 
@@ -8,7 +9,7 @@ function fmtBlock(r: DefectRequest): string {
   if (!r.allocatedStart || !r.allocatedEnd) return "—";
   const s = new Date(r.allocatedStart);
   const e = new Date(r.allocatedEnd);
-  return `${s.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${s.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}–${e.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return `${s.toLocaleDateString(undefined, { timeZone: IST_TZ, month: "short", day: "numeric" })} ${s.toLocaleTimeString([], { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit" })}–${e.toLocaleTimeString([], { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit" })}`;
 }
 
 export function RequestsTable({
@@ -54,7 +55,7 @@ export function RequestsTable({
     });
   }, [requests, query, status, severity, dept, zone]);
 
-  const colCount = 10 + (showDepartment ? 1 : 0) + (showZone ? 1 : 0);
+  const colCount = 11 + (showDepartment ? 1 : 0) + (showZone ? 1 : 0);
   const anyFilter = query || status || severity || dept || zone;
 
   return (
@@ -123,6 +124,7 @@ export function RequestsTable({
         <table className="w-full text-xs">
           <thead className="bg-ops-inset text-ops-muted uppercase text-[10px]">
             <tr>
+              <th className="text-left p-2">ID</th>
               <th className="text-left p-2">Corridor</th>
               {showZone && <th className="text-left p-2">Zone</th>}
               {showDepartment && <th className="text-left p-2">Dept</th>}
@@ -149,6 +151,7 @@ export function RequestsTable({
               const ds = displayStatus(r);
               return (
                 <tr key={r.defectId} onClick={() => onSelect?.(r)} className={onSelect ? "cursor-pointer hover:bg-ops-hover" : ""}>
+                  <td className="p-2 text-ops-muted mono" title={r.defectId}>{shortId(r.defectId)}</td>
                   <td className="p-2 text-ops-text mono">{r.corridorId}</td>
                   {showZone && <td className="p-2 text-ops-muted mono">{r.zone ?? "—"}</td>}
                   {showDepartment && <td className="p-2 text-ops-text">{r.department}</td>}
@@ -168,7 +171,7 @@ export function RequestsTable({
                   <td className="p-2 text-ops-muted mono">{r.planPeriodLabel ?? "—"}</td>
                   <td className="p-2 text-ops-muted">{r.deferCount > 0 ? r.deferCount : ""}</td>
                   <td className="p-2 text-ops-muted whitespace-nowrap" title={r.lastEventDetails ?? undefined}>
-                    {r.lastEventAt ? `${(r.lastEventType ?? "").replace(/_/g, " ")} · ${new Date(r.lastEventAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "—"}
+                    {r.lastEventAt ? `${(r.lastEventType ?? "").replace(/_/g, " ")} · ${new Date(r.lastEventAt).toLocaleDateString(undefined, { timeZone: IST_TZ, month: "short", day: "numeric" })}` : "—"}
                   </td>
                 </tr>
               );

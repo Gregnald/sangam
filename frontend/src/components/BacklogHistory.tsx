@@ -1,3 +1,4 @@
+import { IST_TZ } from "../lib/dates";
 import { useEffect, useMemo, useState } from "react";
 import { api, qs } from "../lib/api";
 import { EVENT_LABEL } from "../lib/requestStatus";
@@ -107,7 +108,7 @@ export function BacklogHistory({ scope }: { scope: "own" | "all" }) {
             )}
             {visible.map((e) => (
               <tr key={e.eventId}>
-                <td className="p-2 text-ops-muted mono whitespace-nowrap">{new Date(e.occurredAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                <td className="p-2 text-ops-muted mono whitespace-nowrap">{new Date(e.occurredAt).toLocaleString(undefined, { timeZone: IST_TZ, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
                 <td className={`p-2 font-medium whitespace-nowrap ${EVENT_TONE[e.eventType] ?? "text-ops-text"}`}>{EVENT_LABEL[e.eventType] ?? e.eventType.replace(/_/g, " ")}</td>
                 {scope === "all" && <td className="p-2 text-ops-text">{e.department}</td>}
                 <td className="p-2 text-ops-text mono">{e.corridorId ?? "—"}</td>

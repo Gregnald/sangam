@@ -19,15 +19,23 @@ logger = logging.getLogger("sangam.scripts.retrain_ranker")
 
 
 def _controller_nudge(conn, defect_ids: pd.Series) -> pd.Series:
+    """+1 / −1 per defect from the controller's own calls, latest wins:
+    preemption approvals/rejections, and per-block accept/reject on a
+    proposed plan (plan.block_decisions)."""
     rows = conn.execute(
         text(
             """
-            SELECT defect_id, status FROM plan.modification_requests
+            SELECT defect_id, CASE WHEN status = 'approved' THEN 1 ELSE -1 END AS nudge, decided_at AS at
+            FROM plan.modification_requests
             WHERE request_type = 'preemption' AND status IN ('approved', 'rejected')
+            UNION ALL
+            SELECT defect_id, CASE WHEN decision = 'accepted' THEN 1 ELSE -1 END, decided_at
+            FROM plan.block_decisions WHERE defect_id IS NOT NULL
+            ORDER BY at
             """
         )
     ).mappings().all()
-    nudge = {str(r["defect_id"]): (1 if r["status"] == "approved" else -1) for r in rows}
+    nudge = {str(r["defect_id"]): int(r["nudge"]) for r in rows}
     return defect_ids.astype(str).map(nudge).fillna(0)
 
 

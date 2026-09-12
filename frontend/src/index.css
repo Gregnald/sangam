@@ -11,11 +11,11 @@
   --color-ops-accent: var(--ops-accent);
   --color-ops-text: var(--ops-text);
   --color-ops-muted: var(--ops-muted);
-  /* Subtle recessed surface (inputs, Gantt tracks). Was bg-black/20. */
+  /* Subtle recessed surface (inputs, Gantt tracks). */
   --color-ops-inset: var(--ops-inset);
-  /* Deeper recess (bars, popovers). Was bg-black/30 … /60. */
+  /* Deeper recess (bars, popovers). */
   --color-ops-inset-strong: var(--ops-inset-strong);
-  /* Slightly raised / hovered surface. Was bg-white/5 … /10. */
+  /* Slightly raised / hovered surface. */
   --color-ops-raise: var(--ops-raise);
   --color-ops-hover: var(--ops-hover);
   /* Hairline on raised things (free windows, joint-block outlines). */
@@ -27,45 +27,53 @@
   --color-status-blocked: #dc2626;
   --color-status-running: #d97706;
   --color-status-clear: #16a34a;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* Dark: a deep blue-black control-room ground with an indigo accent. */
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ops-bg: #0f1115;
-  --ops-panel: #161a20;
-  --ops-border: #262b33;
-  --ops-accent: #3b82f6;
+  --ops-bg: #0a0e17;
+  --ops-panel: #111827;
+  --ops-border: #1f2937;
+  --ops-accent: #6366f1;
+  --ops-accent-strong: #4f46e5;
   --ops-text: #e5e7eb;
-  --ops-muted: #8b92a1;
-  --ops-inset: rgba(0, 0, 0, 0.2);
-  --ops-inset-strong: rgba(0, 0, 0, 0.35);
-  --ops-raise: rgba(255, 255, 255, 0.05);
-  --ops-hover: rgba(255, 255, 255, 0.06);
-  --ops-outline: rgba(255, 255, 255, 0.45);
-  --ops-window: rgba(255, 255, 255, 0.07);
+  --ops-muted: #8b93a7;
+  --ops-inset: rgba(2, 6, 23, 0.45);
+  --ops-inset-strong: rgba(2, 6, 23, 0.7);
+  --ops-raise: rgba(148, 163, 184, 0.06);
+  --ops-hover: rgba(148, 163, 184, 0.09);
+  --ops-outline: rgba(226, 232, 240, 0.4);
+  --ops-window: rgba(148, 163, 184, 0.1);
   --ops-train: #22d3ee;
   --ops-highlight: #fbbf24;
+  --ops-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --ops-radius: 8px;
 }
 
+/* Light: cool grey paper, white cards, the same indigo accent. */
 :root[data-theme="light"] {
   color-scheme: light;
   --ops-bg: #f3f5f9;
   --ops-panel: #ffffff;
-  --ops-border: #d7dce5;
-  --ops-accent: #2563eb;
-  --ops-text: #111827;
-  --ops-muted: #5b6474;
-  --ops-inset: rgba(15, 23, 42, 0.05);
-  --ops-inset-strong: rgba(15, 23, 42, 0.09);
-  --ops-raise: rgba(15, 23, 42, 0.04);
-  --ops-hover: rgba(15, 23, 42, 0.06);
-  --ops-outline: rgba(15, 23, 42, 0.45);
-  /* On a light ground a free window reads best as a white slot on a
-   * slightly darker track; trains need a deeper cyan to hold contrast. */
+  --ops-border: #e3e7ef;
+  --ops-accent: #4f46e5;
+  --ops-accent-strong: #4338ca;
+  --ops-text: #0f172a;
+  --ops-muted: #64748b;
+  --ops-inset: rgba(15, 23, 42, 0.04);
+  --ops-inset-strong: rgba(15, 23, 42, 0.08);
+  --ops-raise: rgba(15, 23, 42, 0.03);
+  --ops-hover: rgba(79, 70, 229, 0.06);
+  --ops-outline: rgba(15, 23, 42, 0.4);
   --ops-window: #ffffff;
   --ops-train: #0891b2;
   --ops-highlight: #d97706;
+  --ops-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 6px 20px -10px rgba(15, 23, 42, 0.18);
+  --ops-radius: 8px;
 
   /* The status/accent shades were picked for a dark ground; on white the
    * -300/-400 tints are too pale to read, so deepen them here. Tailwind
@@ -84,9 +92,95 @@
   }
   body {
     @apply bg-ops-bg text-ops-text;
-    font-feature-settings: "tnum";
+    font-family: var(--font-sans);
+    font-feature-settings: "tnum", "cv11";
+    -webkit-font-smoothing: antialiased;
   }
-  code, .mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  code,
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
   }
+
+  /* One radius and one elevation for every card, input and button — the
+   * components only say "bordered panel"; the theme decides what that looks
+   * like. Table rows keep their hairlines square. */
+  [class~="border-ops-border"]:not(td):not(th):not(tr):not(thead):not(tbody) {
+    border-radius: var(--ops-radius);
+  }
+  [class~="border-b"][class~="border-ops-border"],
+  [class~="border-t"][class~="border-ops-border"] {
+    border-radius: 0;
+  }
+  .bg-ops-panel[class~="border-ops-border"] {
+    box-shadow: var(--ops-shadow);
+  }
+  button,
+  select,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]) {
+    border-radius: 6px;
+  }
+  select,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]) {
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  select:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: none;
+    border-color: var(--ops-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ops-accent) 22%, transparent);
+  }
+  button {
+    transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  }
+  button.bg-ops-accent:hover:not(:disabled) {
+    background-color: var(--ops-accent-strong);
+  }
+
+  /* Tables: quiet header, hairline rows, a lift on hover. */
+  thead th {
+    font-weight: 600;
+    letter-spacing: 0.06em;
+  }
+  tbody tr {
+    transition: background-color 100ms ease;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--ops-muted) 35%, transparent);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* Recharts: axes and tooltips follow the theme. */
+.recharts-cartesian-axis-tick text,
+.recharts-legend-item-text,
+.recharts-polar-angle-axis-tick text {
+  fill: var(--ops-muted) !important;
+  font-size: 11px;
+}
+.recharts-cartesian-grid line {
+  stroke: var(--ops-border);
+}
+.recharts-tooltip-wrapper {
+  outline: none;
+}
+.ops-tooltip {
+  background: var(--ops-panel);
+  border: 1px solid var(--ops-border);
+  border-radius: 6px;
+  box-shadow: var(--ops-shadow);
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--ops-text);
 }

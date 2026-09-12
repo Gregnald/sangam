@@ -2,6 +2,7 @@ import { useState } from "react";
 import { WeeklyPlanView } from "./WeeklyPlanView";
 import { weekLabel } from "../lib/dates";
 import { PlanKpiPanel } from "./PlanKpiPanel";
+import { useAppStore } from "../store/appStore";
 
 export function WeeklyPlanRow({
   planId,
@@ -27,6 +28,7 @@ export function WeeklyPlanRow({
   activeLabel?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const planRevision = useAppStore((s) => s.planRevision);
   return (
     <div className="border border-ops-border">
       <div
@@ -73,7 +75,7 @@ export function WeeklyPlanRow({
       {open && (
         <div className="border-t border-ops-border">
           <div className="p-3 pb-0">
-            <PlanKpiPanel planId={planId} refreshKey={status} />
+            <PlanKpiPanel planId={planId} refreshKey={`${status}:${planRevision}`} />
           </div>
           <WeeklyPlanView zone={zone} weekStart={horizonStart} weekEnd={horizonEnd} planId={planId} />
         </div>

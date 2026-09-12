@@ -66,6 +66,11 @@ export const EVENT_LABEL: Record<string, string> = {
   cleared: "Cleared",
 };
 
+/** Short form of a request id for display; the full UUID goes in a title/tooltip. */
+export function shortId(id: string): string {
+  return id.slice(0, 8).toUpperCase();
+}
+
 /** An overdue request the clock placed into the upcoming week, still holding that block. */
 export function isRescheduled(r: { rescheduledAt: string | null; workflowStatus: string }): boolean {
   return Boolean(r.rescheduledAt) && r.workflowStatus === "scheduled";

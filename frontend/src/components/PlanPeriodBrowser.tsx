@@ -1,5 +1,5 @@
 import { ALL_ZONES, usePlanSelection } from "../hooks/usePlanSelection";
-import { planTimeState } from "../lib/dates";
+import { planTimeState, IST_TZ } from "../lib/dates";
 import type { BlockPlan, ZoneSummary } from "../types/api";
 import { MonthPlanCard } from "./MonthPlanCard";
 import { PeriodKpiPanel } from "./PlanKpiPanel";
@@ -116,7 +116,7 @@ export function PlanPeriodBrowser({
                         )}
                       </td>
                       <td className="p-2 text-ops-muted mono">
-                        {list[0] ? new Date(list[0].generatedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+                        {list[0] ? new Date(list[0].generatedAt).toLocaleString(undefined, { timeZone: IST_TZ, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
                       </td>
                       <td className="p-2 text-right">{z.hasPlan && <span className="text-ops-accent text-[11px]">open →</span>}</td>
                     </tr>

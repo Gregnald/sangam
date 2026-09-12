@@ -1,3 +1,5 @@
+import { fmtDate, fmtTimeIST, istDateKey, istMinuteOfDay } from "../lib/dates";
+import { HourGrid, TimeAxis } from "./GanttAxis";
 const DEPT_COLOR: Record<string, string> = { ENGG: "#2563eb", SIGNAL: "#9333ea", TRD: "#ea580c" };
 
 interface SnapshotRow {
@@ -9,17 +11,9 @@ interface SnapshotRow {
   severity_code?: string;
 }
 
-function dateKey(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function minuteOfDay(iso: string): number {
-  const d = new Date(iso);
-  return d.getHours() * 60 + d.getMinutes();
-}
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
+const dateKey = istDateKey;
+const minuteOfDay = istMinuteOfDay;
+const fmtTime = fmtTimeIST;
 function widthPct(startIso: string, endIso: string): number {
   const mins = (new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000;
   return Math.max((mins / 1440) * 100, 0.6);
@@ -28,9 +22,10 @@ function widthPct(startIso: string, endIso: string): number {
 export function SnapshotGantt({ rows, rangeStart, rangeEnd }: { rows: SnapshotRow[]; rangeStart: string; rangeEnd: string }) {
   const days: string[] = [];
   const cursor = new Date(rangeStart + "T00:00:00");
+  // Calendar days of the range (local midnight → date parts, never via UTC).
   const end = new Date(rangeEnd + "T00:00:00");
   while (cursor <= end) {
-    days.push(dateKey(cursor.toISOString()));
+    days.push(fmtDate(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
 
@@ -40,6 +35,7 @@ export function SnapshotGantt({ rows, rangeStart, rangeEnd }: { rows: SnapshotRo
 
   return (
     <div className="border border-ops-border">
+      <TimeAxis labelWidth="w-24" />
       <div className="divide-y divide-ops-border">
         {days.map((day) => {
           const dayRows = rows.filter((r) => dateKey(r.allocated_start) === day);
@@ -49,6 +45,7 @@ export function SnapshotGantt({ rows, rangeStart, rangeEnd }: { rows: SnapshotRo
                 {new Date(day + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
               </span>
               <div className="relative flex-1 h-6 bg-ops-inset">
+                <HourGrid />
                 {dayRows.map((r, i) => (
                   <div
                     key={i}

@@ -22,6 +22,9 @@ interface AppState {
   isLoading: boolean;
   /** Bumped after a system reset so tab-local state remounts. */
   resetEpoch: number;
+  /** Bumped when a plan's contents change in place (a block accepted/rejected from the Gantt) so KPI panels refetch. */
+  planRevision: number;
+  bumpPlanRevision: () => void;
 
   fetchZones: () => Promise<void>;
   setSelectedZone: (zone: string | null) => void;
@@ -69,6 +72,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeAssignments: [],
   isLoading: false,
   resetEpoch: 0,
+  planRevision: 0,
+  bumpPlanRevision: () => set({ planRevision: get().planRevision + 1 }),
 
 
   fetchZones: async () => {

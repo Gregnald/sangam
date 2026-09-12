@@ -6,11 +6,12 @@ import { HistoryPanel } from "../components/HistoryPanel";
 import { PlanPeriodBrowser } from "../components/PlanPeriodBrowser";
 import { BlockCompatibilityEditor } from "../components/BlockCompatibilityEditor";
 import { IngestionPage } from "../components/IngestionPage";
+import { AnalyticsPage } from "../components/AnalyticsPage";
 import { planTimeState } from "../lib/dates";
 import { useAppStore } from "../store/appStore";
 import type { BulkPlanResult } from "../types/api";
 
-const TABS = ["Backlog", "Approvals", "Plans", "Compatibility", "Ingest", "History"];
+const TABS = ["Backlog", "Approvals", "Plans", "Analytics", "Compatibility", "Ingest", "History"];
 
 export function ControllerDashboard() {
   const [tab, setTab] = useState("Backlog");
@@ -233,6 +234,8 @@ export function ControllerDashboard() {
             <BlockCompatibilityEditor zone={selectedZone} />
           </div>
         )}
+
+        {tab === "Analytics" && <AnalyticsPage />}
 
         {tab === "Ingest" && <IngestionPage />}
 

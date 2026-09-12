@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import admin, auth, compatibility, corridors, ingestion, modifications, notifications, plans, requests
+from app.routers import admin, analytics, auth, compatibility, corridors, ingestion, modifications, notifications, plans, requests
 
 app = FastAPI(title="SANGAM API", version="1.0.0")
 
@@ -64,6 +64,7 @@ app.include_router(compatibility.router)
 app.include_router(plans.router)
 app.include_router(ingestion.router)
 app.include_router(admin.router)
+app.include_router(analytics.router)
 
 
 @app.get("/api/v1/health")

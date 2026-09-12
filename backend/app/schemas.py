@@ -278,7 +278,13 @@ class Asset(BaseModel):
 class ScheduleAssignment(BaseModel):
     model_config = CamelModel
     assignment_id: uuid.UUID
+    plan_id: uuid.UUID | None = None
     defect_id: uuid.UUID | None = None
+    decision: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    defer_count: int | None = None
+    detected_date: date | None = None
     department: str
     allocated_start: datetime
     allocated_end: datetime
@@ -320,6 +326,8 @@ class SchedulePendingRequest(BaseModel):
     requested_window_end: datetime | None = None
     priority_score: float | None = None
     workflow_status: str
+    due_date: date | None = None
+    is_overdue: bool = False
 
 
 class GoodsForecastBand(BaseModel):
@@ -422,3 +430,7 @@ class PlanHistoryEntry(BaseModel):
     snapshot_type: str
     snapshot_at: datetime
     payload: Any
+    zone: str | None = None
+    plan_status: str | None = None
+    approved_by: str | None = None
+    generated_at: datetime | None = None

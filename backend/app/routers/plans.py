@@ -18,7 +18,7 @@ from optimizer.run import (
     regenerate_current_month_plan,
     reject_plan,
 )
-from workflow.engine import reschedule_overdue
+from workflow.engine import decide_block, reschedule_overdue
 
 router = APIRouter(prefix="/api/v1/plans", tags=["plans"])
 CamelModel = ConfigDict(alias_generator=to_camel, populate_by_name=True)
@@ -155,6 +155,21 @@ def approve(plan_id: str, user: CurrentUser = Depends(require_role("CONTROLLER")
     return BlockPlan.model_validate(dict(row))
 
 
+class BlockDecisionBody(BaseModel):
+    model_config = CamelModel
+    approve: bool
+    reason: str | None = None
+
+
+@router.post("/assignments/{assignment_id}/decision")
+def decide_assignment(assignment_id: str, body: BlockDecisionBody, user: CurrentUser = Depends(require_role("CONTROLLER"))):
+    """Accept or reject one proposed block of a plan awaiting approval."""
+    try:
+        return decide_block(assignment_id, body.approve, user.username, body.reason)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/{plan_id}/reject", response_model=BlockPlan)
 def reject(plan_id: str, body: RejectPlanBody, user: CurrentUser = Depends(require_role("CONTROLLER")), db: Session = Depends(get_db)):
     try:
@@ -187,10 +202,11 @@ def get_history(
     if horizon_type:
         clauses.append("horizon_type = :htype")
         params["htype"] = horizon_type
-    q = "SELECT * FROM plan.plan_history"
+    q = """SELECT h.*, p.zone, p.status AS plan_status, p.approved_by, p.generated_at
+           FROM plan.plan_history h LEFT JOIN plan.block_plans p ON p.plan_id = h.plan_id"""
     if clauses:
-        q += " WHERE " + " AND ".join(clauses)
-    q += " ORDER BY snapshot_at DESC LIMIT :limit"
+        q += " WHERE " + " AND ".join(f"h.{c}" for c in clauses)
+    q += " ORDER BY h.snapshot_at DESC LIMIT :limit"
     rows = db.execute(text(q), params).mappings().all()
 
     entries = [dict(r) for r in rows]

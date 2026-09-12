@@ -1,6 +1,7 @@
+import { IST_TZ } from "../../lib/dates";
 import { useMemo, useState } from "react";
 import { CorridorGantt } from "../CorridorGantt";
-import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, EVENT_LABEL, blockDay, displayStatus, isRescheduled, possessionLabel, type DisplayStatus } from "../../lib/requestStatus";
+import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, EVENT_LABEL, blockDay, displayStatus, isRescheduled, possessionLabel, shortId, type DisplayStatus } from "../../lib/requestStatus";
 import type { DefectRequest } from "../../types/api";
 
 const SEV_COLOR: Record<string, string> = { A: "text-red-400", B: "text-amber-400", C: "text-emerald-400" };
@@ -29,7 +30,7 @@ function matches(filter: Filter, ds: DisplayStatus): boolean {
 }
 
 function fmtDT(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  return iso ? new Date(iso).toLocaleString(undefined, { timeZone: IST_TZ, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 }
 
 function BlockCard({ r }: { r: DefectRequest }) {
@@ -48,6 +49,7 @@ function BlockCard({ r }: { r: DefectRequest }) {
           <div className="flex items-center gap-3 min-w-0">
             <span className={`text-[11px] uppercase font-semibold whitespace-nowrap ${DISPLAY_COLOR[ds]}`}>{DISPLAY_LABEL[ds]}</span>
             {isRescheduled(r) && <span className="text-[10px] font-semibold uppercase text-blue-400 border border-blue-400/40 px-1 py-px">Rescheduled</span>}
+            <span className="text-[11px] text-ops-muted mono" title={r.defectId}>#{shortId(r.defectId)}</span>
             <span className="text-xs font-semibold text-ops-text mono">{r.corridorId}</span>
             <span className="text-xs text-ops-text">{r.defectType.replace(/_/g, " ")}</span>
             <span className={`text-[11px] font-semibold ${SEV_COLOR[r.severityCode]}`}>Sev {r.severityCode}</span>
@@ -57,7 +59,7 @@ function BlockCard({ r }: { r: DefectRequest }) {
           <div className="text-[12px] text-ops-muted mono text-right">
             {hasBlock ? (
               <>
-                {fmtDT(r.allocatedStart)} – {new Date(r.allocatedEnd!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                {fmtDT(r.allocatedStart)} – {new Date(r.allocatedEnd!).toLocaleTimeString([], { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit" })}
                 {r.planPeriodLabel && <span className="ml-2 text-ops-muted/80">plan {r.planPeriodLabel}</span>}
               </>
             ) : r.requestedWindowStart ? (
@@ -90,9 +92,10 @@ function BlockCard({ r }: { r: DefectRequest }) {
               corridorId={r.corridorId}
               rangeStart={day}
               rangeEnd={day}
-              highlightWindowStart={highlightStart}
-              highlightWindowEnd={highlightEnd}
-              highlightLabel={hasBlock ? `This block (${r.department})` : r.requestedWindowStart ? "Window you asked for" : null}
+              highlightWindowStart={hasBlock ? null : highlightStart}
+              highlightWindowEnd={hasBlock ? null : highlightEnd}
+              highlightDefectId={hasBlock ? r.defectId : null}
+              highlightLabel={hasBlock ? "This job" : r.requestedWindowStart ? "Window you asked for" : null}
               highlightKind={hasBlock ? "own" : "proposed"}
             />
           ) : (

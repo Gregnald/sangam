@@ -28,8 +28,13 @@ export function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-ops-bg relative">
       <ThemeToggle className="absolute top-4 right-4" />
       <form onSubmit={handleSubmit} className="w-full max-w-sm border border-ops-border bg-ops-panel p-8">
-        <h1 className="text-lg font-semibold text-ops-text tracking-wide">SANGAM</h1>
-        <p className="text-xs text-ops-muted mt-1 mb-6">Block Planning &amp; Coordination</p>
+        <div className="flex items-center gap-3 mb-6">
+          <span className="w-9 h-9 rounded-lg bg-ops-accent text-white text-base font-bold flex items-center justify-center">S</span>
+          <div className="leading-tight">
+            <h1 className="text-base font-semibold text-ops-text tracking-wide">SANGAM</h1>
+            <p className="text-xs text-ops-muted">Block Planning &amp; Coordination</p>
+          </div>
+        </div>
 
         <label className="block text-xs font-medium text-ops-muted mb-1">Username</label>
         <input
@@ -52,7 +57,7 @@ export function LoginPage() {
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full py-2 bg-ops-accent hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+          className="w-full py-2 bg-ops-accent disabled:opacity-50 text-white text-sm font-medium"
         >
           {isLoading ? "Signing in…" : "Sign in"}
         </button>

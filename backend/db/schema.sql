@@ -218,7 +218,33 @@ CREATE TABLE IF NOT EXISTS plan.block_assignments (
     allocated_end        TIMESTAMPTZ NOT NULL,
     joint_block_group_id UUID
 );
+-- Controller's verdict on one proposed block while its plan is still
+-- pending approval: 'accepted' (kept, marked) — a rejected block is removed
+-- from the proposal, and the decision itself lives in plan.block_decisions.
+ALTER TABLE plan.block_assignments ADD COLUMN IF NOT EXISTS decision TEXT;
+ALTER TABLE plan.block_assignments ADD COLUMN IF NOT EXISTS decided_by TEXT;
+ALTER TABLE plan.block_assignments ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_assignments_plan ON plan.block_assignments (plan_id);
+
+-- Every per-block accept/reject the controller makes on a proposed plan.
+-- Outlives the assignment row (a rejected block is deleted from the plan)
+-- and is training signal: the priority ranker reads it as a label nudge,
+-- the pairwise compatibility model as a decision about the block's partners.
+CREATE TABLE IF NOT EXISTS plan.block_decisions (
+    decision_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_id         UUID REFERENCES plan.block_plans(plan_id) ON DELETE CASCADE,
+    assignment_id   UUID,
+    defect_id       UUID REFERENCES core.defects(defect_id),
+    corridor_id     TEXT,
+    department      TEXT,
+    allocated_start TIMESTAMPTZ,
+    allocated_end   TIMESTAMPTZ,
+    decision        TEXT NOT NULL,                -- 'accepted' | 'rejected'
+    reason          TEXT,
+    decided_by      TEXT,
+    decided_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_block_decisions_defect ON plan.block_decisions (defect_id, decided_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assignments_defect ON plan.block_assignments (defect_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_corridor_time ON plan.block_assignments (corridor_id, allocated_start);
 

@@ -1,3 +1,41 @@
+/**
+ * Every clock in the app is Indian Railways time. Timestamps come from the
+ * API with an offset; these helpers render and position them in IST no
+ * matter what zone the browser is set to. Date-only strings (YYYY-MM-DD)
+ * are already operational days and pass through untouched.
+ */
+export const IST_TZ = "Asia/Kolkata";
+
+const IST_PARTS = new Intl.DateTimeFormat("en-GB", { timeZone: IST_TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+/** { y, m, d, h, min } of an ISO timestamp in IST. */
+export function istParts(iso: string): { y: number; m: number; d: number; h: number; min: number } {
+  const parts: Record<string, number> = {};
+  for (const p of IST_PARTS.formatToParts(new Date(iso))) if (p.type !== "literal") parts[p.type] = Number(p.value);
+  return { y: parts.year, m: parts.month, d: parts.day, h: parts.hour, min: parts.minute };
+}
+
+/** "YYYY-MM-DD" of a timestamp in IST; a plain date string is returned as-is. */
+export function istDateKey(iso: string): string {
+  if (/^\d{4}-\d{2}-\d{2}(T00:00:00)?$/.test(iso)) return iso.slice(0, 10);
+  const { y, m, d } = istParts(iso);
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** Minutes since IST midnight. */
+export function istMinuteOfDay(iso: string): number {
+  const { h, min } = istParts(iso);
+  return h * 60 + min;
+}
+
+export function fmtTimeIST(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit" });
+}
+
+export function fmtDateTimeIST(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { timeZone: IST_TZ, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 export function mondayOf(d: Date): Date {
   const day = (d.getDay() + 6) % 7;
   const start = new Date(d);

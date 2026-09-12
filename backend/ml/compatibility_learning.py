@@ -1,20 +1,3 @@
-"""Learn which departments may share a possession from what the controller
-actually decides.
-
-The seeded compatibility matrix is a prior — a safe default written before
-any block was ever planned here. Every per-window override the controller
-records ("yes, ENGG and TRD may share this one", "no, not this one") is an
-observation of the real local rule. Once there is enough evidence for a
-pair, the learned answer replaces the seeded default; the controller can
-still override any single window either way.
-
-Estimator: Beta(1, 1) prior over P(pair may share), updated with the
-override outcomes. A pair's default flips to *compatible* when the posterior
-mean is ≥ FLIP_THRESHOLD after at least MIN_EVIDENCE overrides, and to
-*incompatible* when it is ≤ 1 − FLIP_THRESHOLD. Anything in between keeps
-the seeded default. Deliberately conservative: flipping a safety default
-takes a consistent pattern, not a couple of one-offs.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict

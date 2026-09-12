@@ -167,9 +167,10 @@ def corridor_schedule(
     assignment_rows = db.execute(
         text(
             f"""
-            SELECT a.assignment_id, a.defect_id, a.department, a.allocated_start, a.allocated_end, a.joint_block_group_id,
+            SELECT a.assignment_id, a.plan_id, a.defect_id, a.department, a.allocated_start, a.allocated_end, a.joint_block_group_id,
+                   a.decision, a.decided_by, a.decided_at,
                    d.defect_type, d.severity_code, d.requested_by, d.asset_id, d.source_system, d.estimated_block_hours,
-                   d.due_date, d.priority_score, d.speed_restriction_kmph, d.rescheduled_at,
+                   d.due_date, d.priority_score, d.speed_restriction_kmph, d.rescheduled_at, d.defer_count, d.detected_date,
                    p.status AS plan_status, p.period_label AS plan_period_label
             FROM plan.block_assignments a
             JOIN plan.block_plans p ON p.plan_id = a.plan_id
@@ -186,7 +187,8 @@ def corridor_schedule(
         text(
             """
             SELECT defect_id, department, defect_type, severity_code, estimated_block_hours,
-                   requested_window_start, requested_window_end, priority_score, workflow_status
+                   requested_window_start, requested_window_end, priority_score, workflow_status,
+                   due_date, (due_date < CURRENT_DATE) AS is_overdue
             FROM core.defects
             WHERE corridor_id = :c AND workflow_status IN ('pending', 'awaiting_dept_response', 'awaiting_controller')
             ORDER BY priority_score DESC NULLS LAST

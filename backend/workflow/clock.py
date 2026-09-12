@@ -14,9 +14,10 @@ what the passage of time implies:
 
 "Overdue" (a pending request past its due date) is not a status change —
 it stays pending and is reported as a flag by the requests API. Once per
-operational day, though, every overdue request is offered to the upcoming
-week's live plan (`workflow/engine.py::reschedule_overdue`) and placed
-wherever it fits.
+operational day, though, the sweep (`workflow/engine.py::reschedule_overdue`)
+places every overdue request into the nearest week that can take it, and
+every request due within the next two weeks into an on-time slot — so work
+never stalls waiting for a plan.
 """
 from __future__ import annotations
 
@@ -149,7 +150,9 @@ def sync_with_clock(now: datetime | None = None) -> dict:
         from workflow.engine import reschedule_overdue
 
         try:
-            result["overdue_rescheduled"] = reschedule_overdue(today)["rescheduled"]
+            sweep = reschedule_overdue(today)
+            result["overdue_rescheduled"] = sweep["rescheduled"]
+            result["due_soon_scheduled"] = sweep["scheduled"]
             _overdue_swept_on = today
         except Exception:  # noqa: BLE001 - the sweep must never break the clock
             logger.exception("overdue reschedule sweep failed; will retry next tick")
