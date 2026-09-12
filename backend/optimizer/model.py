@@ -1,37 +1,40 @@
 """CP-SAT block assignment model.
 
 One *window* is one candidate possession: a timetable gap on one corridor on
-one day. Any number of jobs can be placed in it, and that is the whole point
-of coordinated block planning — an "integrated block" where Engineering,
-S&T and TRD crews work the same section under one possession instead of
-each taking the corridor out of service separately.
+one day. Any number of jobs can be placed in it — that is the whole point of
+coordinated block planning: an "integrated block" where Engineering, S&T and
+TRD crews work the same section under one possession instead of each taking
+the corridor out of service separately.
 
-How a shared window is modelled:
+How many departments end up sharing a possession is **not a parameter**. It
+falls out of the optimization, bounded only by constraints that are real:
 
-- Departments work **in parallel**: an ENGG crew on the track and a SIGNAL
-  crew on the relay room don't queue behind each other. Whether two
-  departments may share a possession at all is the compatibility matrix
-  (with per-window overrides), and a window's `max_concurrent_depts` caps how
-  many can be on the section at once.
-- Jobs of the **same department** run **in sequence** inside the possession —
-  one crew, one job after another — so their durations add up and must fit
-  the window.
-- The possession therefore lasts as long as the busiest department's queue,
-  not the sum of every job. That length is what the objective charges for:
-  bundling work into one possession is cheaper than spreading it out, and
-  that is the pull that produces joint blocks.
+- **Compatibility.** Whether two *jobs* may be on the section at the same
+  time is the work-type × work-type matrix (optimizer/pair_compat.py; the
+  controller's per-window overrides on top). Pairwise hard constraint on the
+  jobs — a possession takes as many crews as are mutually compatible.
+- **Time.** Departments work in parallel; a department's own jobs run back to
+  back, so its queue must fit the window.
+
+The objective then does the deciding: placing a job always beats leaving it
+out, and beyond that the solver pays for every hour a corridor is under
+possession — weighted by how busy the corridor is — so it bundles work into
+shared possessions wherever the constraints above allow, most aggressively on
+the corridors where downtime costs the most traffic.
 
 Objective (maximised):
 
-    + PRIORITY_WEIGHT * (score + 1)   for every job placed
-    - POSSESSION_PENALTY * possession length (tenths of an hour) per used window
-    - BLOCK_EVENT_PENALTY               per used window
-    - LATENESS_PENALTY_PER_DAY * days   for a job placed after its due date
+    + PRIORITY_WEIGHT * (score + 1)                        for every job placed
+    - possession length (tenths of an hour) * cost(traffic) per used window
+    - BLOCK_EVENT_PENALTY                                    per used window
+    - LATENESS_PENALTY_PER_DAY * days                        for a job placed after its due date
 
-Placing a job always beats leaving it out: the smallest reward (score 0) is
-PRIORITY_WEIGHT, larger than the worst possession penalty a single window can
-incur (24 h → 240 tenths × POSSESSION_PENALTY), so the duration terms only
-ever decide *where* work goes, never *whether* it goes.
+where cost(traffic) = POSSESSION_PENALTY * (1 + TRAFFIC_WEIGHT * traffic_factor),
+traffic_factor in [0, 1] being the corridor's trains/day relative to the
+busiest corridor in the zone. The smallest job reward (score 0) is
+PRIORITY_WEIGHT = 1000; the worst possession penalty a single window can incur
+is 24 h × 10 × POSSESSION_PENALTY × (1 + TRAFFIC_WEIGHT) = 960 < 1000, so the
+possession terms only ever decide *where* work goes, never *whether* it goes.
 """
 from __future__ import annotations
 
@@ -42,13 +45,20 @@ from datetime import date, datetime, timedelta
 
 from ortools.sat.python import cp_model
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ml.pair_compat_model import PairPreference
+    from optimizer.pair_compat import PairCompatibility
+
 logger = logging.getLogger("sangam.optimizer.model")
 
 DEPARTMENTS = ("ENGG", "SIGNAL", "TRD")
 PRIORITY_WEIGHT = 1000
-# Per tenth-of-an-hour of possession. 3 × 240 tenths = 720 < PRIORITY_WEIGHT,
-# so even a 24 h possession never outweighs placing the lowest-ranked job.
-POSSESSION_PENALTY = 3
+# Per tenth-of-an-hour of possession on an idle corridor …
+POSSESSION_PENALTY = 2
+# … up to (1 + TRAFFIC_WEIGHT)× that on the zone's busiest corridor.
+TRAFFIC_WEIGHT = 1.0
 BLOCK_EVENT_PENALTY = 20
 LATENESS_PENALTY_PER_DAY = 50
 
@@ -61,6 +71,8 @@ class Job:
     priority_score: float
     duration_hours: float
     due_date: date | None = None
+    # What the work is — the key into the work-type compatibility matrix.
+    defect_type: str | None = None
 
 
 @dataclass
@@ -70,7 +82,11 @@ class Window:
     start: datetime
     end: datetime
     duration_hours: float
-    max_concurrent_depts: int
+    # Kept for schema compatibility; concurrency is decided by the
+    # constraints in `solve`, not by this number.
+    max_concurrent_depts: int = len(DEPARTMENTS)
+    # Corridor busyness relative to the zone's busiest corridor, 0..1.
+    traffic_factor: float = 0.0
 
 
 @dataclass
@@ -98,25 +114,31 @@ def _tenths(hours: float) -> int:
     return int(round(hours * 10))
 
 
+# Soft preference from the pairwise model, per pair actually placed together:
+# +PAIR_PREF_WEIGHT * (2p − 1), i.e. up to ±PAIR_PREF_WEIGHT. Kept an order of
+# magnitude under the possession terms so it only breaks ties between
+# equally good bundlings; it can't make the solver open an extra block.
+PAIR_PREF_WEIGHT = 10
+
+
 def solve(
     jobs: list[Job],
     windows: list[Window],
+    pair_compat: "PairCompatibility | None" = None,
+    pair_preference: "PairPreference | None" = None,
     compatible_pairs: set[frozenset[str]] | None = None,
     window_overrides: dict[str, dict[frozenset, bool]] | None = None,
     time_limit_s: int = 120,
     num_workers: int = 8,
 ) -> SolveResult:
-    compatible_pairs = compatible_pairs if compatible_pairs is not None else {
-        frozenset(p) for p in ((a, b) for a in DEPARTMENTS for b in DEPARTMENTS)
-    }
-    window_overrides = window_overrides or {}
+    """`pair_compat` is the job-pair engine (optimizer/pair_compat.py). When
+    it isn't given (unit tests), a minimal one is built from `compatible_pairs`
+    / `window_overrides` (department level, no work-type cells)."""
+    if pair_compat is None:
+        from optimizer.pair_compat import PairCompatibility
 
-    def pair_compatible(window_id: str, a: str, b: str) -> bool:
-        override = window_overrides.get(window_id)
-        pair = frozenset((a, b))
-        if override and pair in override:
-            return override[pair]
-        return pair in compatible_pairs
+        pairs = compatible_pairs if compatible_pairs is not None else {frozenset(p) for p in ((a, b) for a in DEPARTMENTS for b in DEPARTMENTS)}
+        pair_compat = PairCompatibility(matrix={}, dept_pairs=pairs, window_overrides=window_overrides or {})
 
     model = cp_model.CpModel()
 
@@ -147,6 +169,8 @@ def solve(
     used: dict[str, cp_model.IntVar] = {}
     possession: dict[str, cp_model.IntVar] = {}
     jobs_by_id = {j.defect_id: j for j in jobs}
+    n_pair_constraints = 0
+    pair_terms: list = []
 
     for w in windows:
         jobs_on_window = [j for j in jobs if (j.defect_id, w.window_id) in x]
@@ -172,13 +196,28 @@ def solve(
                 model.Add(x[j.defect_id, w.window_id] <= dept_used[dept])
                 model.Add(x[j.defect_id, w.window_id] <= used[w.window_id])
 
-        # Different departments: in parallel, if they are allowed to share.
-        model.Add(sum(dept_used.values()) <= w.max_concurrent_depts)
-        present = list(dept_used.keys())
-        for i, a in enumerate(present):
-            for b in present[i + 1 :]:
-                if not pair_compatible(w.window_id, a, b):
-                    model.Add(dept_used[a] + dept_used[b] <= 1)
+        # Different departments in parallel — job by job. Every pair of
+        # jobs that could land in this window is checked against the
+        # work-type matrix; an incompatible pair can't both be here. This —
+        # not a head-count — is what bounds concurrency: three mutually
+        # compatible jobs make a three-crew possession.
+        for i, a in enumerate(jobs_on_window):
+            for b in jobs_on_window[i + 1 :]:
+                if a.department == b.department:
+                    continue
+                verdict = pair_compat.check(a, b, w.window_id)
+                if not verdict.ok:
+                    model.Add(x[a.defect_id, w.window_id] + x[b.defect_id, w.window_id] <= 1)
+                    n_pair_constraints += 1
+                elif pair_preference is not None and pair_preference.active:
+                    # Allowed pair: let the learned preference nudge the choice.
+                    p = pair_preference.probability(a.department, b.department, a.defect_type, b.defect_type, a.duration_hours, b.duration_hours, w.traffic_factor)
+                    if p is not None:
+                        both = model.NewBoolVar(f"pair_{a.defect_id}_{b.defect_id}_{w.window_id}")
+                        model.Add(both <= x[a.defect_id, w.window_id])
+                        model.Add(both <= x[b.defect_id, w.window_id])
+                        model.Add(both >= x[a.defect_id, w.window_id] + x[b.defect_id, w.window_id] - 1)
+                        pair_terms.append(int(round(PAIR_PREF_WEIGHT * (2 * p - 1))) * both)
 
     objective_terms = []
     for j in jobs:
@@ -204,15 +243,21 @@ def solve(
             if days_late > 0:
                 objective_terms.append(-LATENESS_PENALTY_PER_DAY * days_late * var)
     for wid, var in used.items():
+        w = window_by_id_all[wid]
+        # An hour of possession on the zone's busiest corridor costs
+        # (1 + TRAFFIC_WEIGHT)× an hour on an idle branch — availability is
+        # worth most where the trains are.
+        cost = int(round(POSSESSION_PENALTY * (1.0 + TRAFFIC_WEIGHT * max(0.0, min(1.0, w.traffic_factor)))))
         objective_terms.append(-BLOCK_EVENT_PENALTY * var)
-        objective_terms.append(-POSSESSION_PENALTY * possession[wid])
+        objective_terms.append(-cost * possession[wid])
 
-    model.Maximize(sum(objective_terms))
+    model.Maximize(sum(objective_terms) + sum(pair_terms))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_s
     solver.parameters.num_search_workers = num_workers
     status = solver.Solve(model)
+    logger.info("model: %d jobs, %d windows, %d x-vars, %d pair-incompatibility constraints, %d learned pair preferences", len(jobs), len(windows), len(x), n_pair_constraints, len(pair_terms))
 
     status_name = solver.StatusName(status)
     assignments: list[Assignment] = []

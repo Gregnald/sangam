@@ -280,3 +280,46 @@ CREATE TABLE IF NOT EXISTS core.defect_events (
 );
 CREATE INDEX IF NOT EXISTS idx_defect_events_defect ON core.defect_events (defect_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_defect_events_time ON core.defect_events (occurred_at DESC);
+
+-- =========================================================================
+-- Job-level compatibility: work type × work type, and the decision log the
+-- pairwise model learns from
+-- =========================================================================
+-- Whether two *jobs* can share one possession is a single matrix over kinds
+-- of work (each kind belongs to one department, so department compatibility
+-- is implied): tamping never alongside a track-circuit job, no hot welding
+-- under contact-wire renewal, relay-room work alongside anything. The
+-- controller edits it from the Compatibility tab; every edit is logged as a
+-- decision and retrains the pairwise model.
+
+CREATE TABLE IF NOT EXISTS core.work_type_compatibility (
+    type_a              TEXT NOT NULL,
+    type_b              TEXT NOT NULL,
+    compatible          BOOLEAN NOT NULL,
+    notes               TEXT,
+    updated_by          TEXT,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (type_a, type_b)
+);
+
+-- Every time the controller decides whether two kinds of work may share a
+-- possession (a matrix edit, a per-window override), the decision is logged
+-- with the pair's features. This is the training set for the pairwise
+-- compatibility model (ml/pair_compat_model.py).
+CREATE TABLE IF NOT EXISTS core.pair_decisions (
+    decision_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    decided_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_by      TEXT,
+    source          TEXT NOT NULL,                -- 'matrix' | 'override'
+    dept_a          TEXT NOT NULL,
+    dept_b          TEXT NOT NULL,
+    type_a          TEXT,
+    type_b          TEXT,
+    duration_a_h    NUMERIC(5,2),
+    duration_b_h    NUMERIC(5,2),
+    traffic_factor  NUMERIC(4,3),
+    corridor_id     TEXT,
+    window_id       UUID,
+    compatible      BOOLEAN NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pair_decisions_time ON core.pair_decisions (decided_at DESC);

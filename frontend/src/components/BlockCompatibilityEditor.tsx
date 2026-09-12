@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { CorridorPicker } from "./CorridorPicker";
+import { LearnedCompatibility } from "./LearnedCompatibility";
+import { WorkTypeMatrix } from "./WorkTypeMatrix";
 import { api, qs } from "../lib/api";
 import { todayIso } from "../lib/dates";
 import type { CompatibilityOverrideEntry, CorridorBlockWindow, CorridorSchedule } from "../types/api";
@@ -11,6 +13,7 @@ export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
   const [windowId, setWindowId] = useState<string | null>(null);
   const [entries, setEntries] = useState<CompatibilityOverrideEntry[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [learnedKey, setLearnedKey] = useState(0);
 
   useEffect(() => {
     setWindowId(null);
@@ -37,6 +40,7 @@ export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
     try {
       await api.post("/api/v1/compatibility/overrides", { windowId, deptA: entry.deptA, deptB: entry.deptB, compatible: !entry.compatible });
       await refresh();
+      setLearnedKey((k) => k + 1);
     } finally {
       setBusy(null);
     }
@@ -49,6 +53,7 @@ export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
     try {
       await api.del("/api/v1/compatibility/overrides", { windowId, deptA: entry.deptA, deptB: entry.deptB });
       await refresh();
+      setLearnedKey((k) => k + 1);
     } finally {
       setBusy(null);
     }
@@ -56,6 +61,8 @@ export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
 
   return (
     <div className="space-y-3">
+      <WorkTypeMatrix />
+      <LearnedCompatibility refreshKey={learnedKey} />
       <div className="flex items-center gap-3">
         <CorridorPicker zone={zone} value={corridorId} onChange={setCorridorId} />
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1" />

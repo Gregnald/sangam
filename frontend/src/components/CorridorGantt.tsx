@@ -259,7 +259,7 @@ export function CorridorGantt({
                     key={w.windowId}
                     className="absolute top-0 h-full bg-ops-window border-l border-r border-ops-outline/50"
                     style={{ left: `${(minuteOfDay(w.windowStart) / 1440) * 100}%`, width: `${widthPct(w.windowStart, w.windowEnd)}%` }}
-                    title={`Free window ${fmtTime(w.windowStart)}–${fmtTime(w.windowEnd)} (max ${w.maxConcurrentDepts} depts)`}
+                    title={`Free window ${fmtTime(w.windowStart)}–${fmtTime(w.windowEnd)} — any number of jobs may share it if their kinds of work are compatible (Compatibility tab)`}
                   />
                 ))}
                 {dayWindows.length > 0 &&

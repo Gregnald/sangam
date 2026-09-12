@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import text
 
-from app.compatibility import is_compatible
+from optimizer.pair_compat import load_pair_compatibility
 from app.config import get_settings
 from app.db import engine
 from app.goods_forecast import clip_window_rows, load_bands
@@ -32,6 +33,13 @@ def _retrain_and_rescore() -> None:
         score_priority.score()
     except Exception:
         logger.exception("retrain-on-override failed; leaving the existing model in place")
+    try:
+        from ml.pair_compat_model import train as train_pair_model
+
+        with engine.connect() as conn:
+            train_pair_model(conn)
+    except Exception:
+        logger.exception("pair-compatibility model retrain failed; leaving the existing model in place")
 
 
 def interim_priority(severity_code: str, speed_restriction_active: bool, defer_count: int) -> float:
@@ -57,38 +65,51 @@ def _active_weekly_plan(conn, zone: str, anchor: date | None = None) -> dict | N
     return dict(row) if row else None
 
 
-def _window_usage(conn, plan_id: str, window_id: str) -> tuple[dict[str, float], str | None]:
+def _window_usage(conn, plan_id: str, window_id: str) -> tuple[dict[str, float], str | None, list[tuple[str, float | None]]]:
     """What already sits in this window of the live plan: hours queued per
     department (same-department jobs run back to back inside a possession,
-    so they add up) and the possession's joint-block group id, if it has one.
+    so they add up), the possession's joint-block group id, and where each
+    job's kind of work (department, work type) for the compatibility check.
     Departments run in parallel, so one department's queue never counts
     against another's."""
     rows = conn.execute(
-        text("SELECT department, allocated_start, allocated_end, joint_block_group_id FROM plan.block_assignments WHERE plan_id = :p AND window_id = :w"),
+        text(
+            """
+            SELECT b.department, b.allocated_start, b.allocated_end, b.joint_block_group_id, d.defect_type
+            FROM plan.block_assignments b
+            LEFT JOIN core.defects d ON d.defect_id = b.defect_id
+            WHERE b.plan_id = :p AND b.window_id = :w
+            """
+        ),
         {"p": plan_id, "w": window_id},
     ).mappings().all()
     hours_by_dept: dict[str, float] = {}
     group_id = None
+    sites: list[_JobLike] = []
     for r in rows:
         hours_by_dept[r["department"]] = hours_by_dept.get(r["department"], 0.0) + (r["allocated_end"] - r["allocated_start"]).total_seconds() / 3600.0
         group_id = group_id or (str(r["joint_block_group_id"]) if r["joint_block_group_id"] else None)
-    return hours_by_dept, group_id
+        sites.append(_JobLike(r["department"], r["defect_type"]))
+    return hours_by_dept, group_id, sites
 
 
-def _fits(conn, hours_by_dept: dict[str, float], department: str, duration_hours: float, window_capacity_hours: float, max_concurrent: int, window_id: str | None = None) -> bool:
-    """Same rules as the optimizer: my department's queue (existing + this
-    job) must fit the window; the set of departments present must stay within
-    the window's concurrency cap; every other department present must be
-    allowed to share a possession with mine."""
+@dataclass
+class _JobLike:
+    department: str
+    defect_type: str | None
+
+
+def _fits(conn, hours_by_dept: dict[str, float], department: str, duration_hours: float, window_capacity_hours: float, window_id: str | None = None, sites: list[_JobLike] | None = None, defect_type: str | None = None, pair_compat=None) -> tuple[bool, str]:
+    """Can this job join what's already in the window? Same engine as the
+    optimizer: my department's queue (existing + this job) must fit, and I
+    must be compatible (work-type matrix) with every job already in the
+    possession. Returns the verdict and the reason, so a refusal can be
+    explained."""
     if hours_by_dept.get(department, 0.0) + duration_hours > float(window_capacity_hours) + 1e-6:
-        return False
-    combined = set(hours_by_dept) | {department}
-    if len(combined) > max_concurrent:
-        return False
-    for other in hours_by_dept:
-        if other != department and not is_compatible(conn, department, other, window_id=window_id):
-            return False
-    return True
+        return False, f"{department}'s queue in this window would exceed its {float(window_capacity_hours):.1f} h"
+    engine_ = pair_compat or load_pair_compatibility(conn, [window_id] if window_id else [])
+    verdict = engine_.check_against(_JobLike(department, defect_type), sites or [], window_id)
+    return verdict.ok, verdict.reason
 
 
 def _join_possession(conn, plan_id: str, window_id: str, group_id: str | None) -> str | None:
@@ -160,7 +181,7 @@ def submit_request(
 
         zone = conn.execute(text("SELECT zone FROM core.corridors WHERE corridor_id = :c"), {"c": corridor_id}).scalar()
         log_event(conn, defect_id, "submitted", None, "pending", requested_by, f"{department} · {defect_type} · sev {severity_code} · {estimated_block_hours:.2f} h")
-        outcome = _place(conn, defect_id, department, corridor_id, zone, estimated_block_hours, score, requested_window_start, requested_window_end, settings.preemption_margin)
+        outcome = _place(conn, defect_id, department, corridor_id, zone, estimated_block_hours, score, requested_window_start, requested_window_end, settings.preemption_margin, defect_type=defect_type)
 
     return {"defect_id": defect_id, "outcome": outcome}
 
@@ -177,9 +198,10 @@ def place_existing_defect(defect_id: str) -> str:
         row = conn.execute(
             text(
                 """
-                SELECT corridor_id, department, estimated_block_hours, priority_score,
-                       requested_window_start, requested_window_end
-                FROM core.defects WHERE defect_id = :id AND workflow_status = 'pending'
+                SELECT d.corridor_id, d.department, d.estimated_block_hours, d.priority_score,
+                       d.requested_window_start, d.requested_window_end, d.defect_type
+                FROM core.defects d
+                WHERE d.defect_id = :id AND d.workflow_status = 'pending'
                 """
             ),
             {"id": defect_id},
@@ -192,10 +214,11 @@ def place_existing_defect(defect_id: str) -> str:
             conn, defect_id, row["department"], row["corridor_id"], zone,
             float(row["estimated_block_hours"]), float(row["priority_score"]),
             row["requested_window_start"], row["requested_window_end"], settings.preemption_margin,
+            defect_type=row["defect_type"],
         )
 
 
-def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | None, duration_hours: float, score: float, requested_start: datetime | None, requested_end: datetime | None, preemption_margin: float) -> str:
+def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | None, duration_hours: float, score: float, requested_start: datetime | None, requested_end: datetime | None, preemption_margin: float, defect_type: str | None = None) -> str:
     if not zone:
         return "pending"
 
@@ -233,6 +256,9 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
         matching = list(windows)
         other = []
 
+    pair_compat = load_pair_compatibility(conn, [str(w["window_id"]) for w in windows])
+    refusals: list[str] = []
+
     def _find_fit(candidates: list) -> dict | None:
         # Windows that already hold a possession come first: joining an
         # existing block costs the corridor nothing extra, a fresh window is
@@ -244,14 +270,18 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
         for w in ranked:
             if w["duration_hours"] < duration_hours:
                 continue
-            hours_by_dept, _ = _usage(w)
-            if _fits(conn, hours_by_dept, department, duration_hours, w["duration_hours"], w["max_concurrent_depts"], window_id=str(w["window_id"])):
+            hours_by_dept, _, sites = _usage(w)
+            ok, reason = _fits(conn, hours_by_dept, department, duration_hours, w["duration_hours"], window_id=str(w["window_id"]), sites=sites, defect_type=defect_type, pair_compat=pair_compat)
+            if ok:
                 return w
+            if sites:
+                # Only possessions we *tried to join* are worth explaining.
+                refusals.append(f"{w['window_start']:%a %d %b %H:%M}: {reason}")
         return None
 
     direct_fit = _find_fit(matching)
     if direct_fit:
-        hours_by_dept, group_id = _window_usage(conn, active_plan["plan_id"], str(direct_fit["window_id"]))
+        hours_by_dept, group_id, _ = _window_usage(conn, active_plan["plan_id"], str(direct_fit["window_id"]))
         # Queue behind my own department's jobs already in this possession;
         # other departments work alongside from the window's start.
         allocated_start = direct_fit["window_start"] + timedelta(hours=hours_by_dept.get(department, 0.0))
@@ -299,7 +329,12 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
                 "id": request_id, "defect": defect_id, "dept": department, "plan": active_plan["plan_id"],
                 "affected": preemption_target["defect_id"], "adept": preemption_target["department"], "corridor": corridor_id,
                 "ws": preemption_target["allocated_start"], "we": preemption_target["allocated_end"],
-                "desc": f"{department} request has priority score {score:.0f}, exceeding the currently scheduled {preemption_target['department']} job (score {float(preemption_target['priority_score'] or 0):.0f}) by the preemption margin. Approving will bump that job back to the backlog and schedule this one in its place.",
+                "desc": (
+                    f"{department} request has priority score {score:.0f}, exceeding the currently scheduled {preemption_target['department']} job "
+                    f"(score {float(preemption_target['priority_score'] or 0):.0f}) by the preemption margin. "
+                    + (f"It could not simply join that possession: {refusals[0].split(': ', 1)[-1]}. " if refusals else "")
+                    + "Approving will bump that job back to the backlog and schedule this one in its place."
+                ),
             },
         )
         conn.execute(text("UPDATE core.defects SET workflow_status = 'awaiting_controller', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
@@ -327,13 +362,19 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
             {
                 "id": request_id, "defect": defect_id, "dept": department, "plan": active_plan["plan_id"], "corridor": corridor_id,
                 "ws": alt_window["window_start"], "we": alt_window["window_start"] + timedelta(hours=duration_hours),
-                "desc": f"No capacity at the requested time on {corridor_id}. Nearest available window: {alt_window['window_start']} - {alt_window['window_end']}.",
+                "desc": (
+                    f"No capacity at the requested time on {corridor_id}"
+                    + (f" ({refusals[0].split(': ', 1)[-1]})" if refusals else "")
+                    + f". Nearest available window: {alt_window['window_start']:%Y-%m-%d %H:%M} - {alt_window['window_end']:%H:%M}."
+                ),
             },
         )
         conn.execute(text("UPDATE core.defects SET workflow_status = 'awaiting_dept_response', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
         log_event(conn, defect_id, "reschedule_offered", "pending", "awaiting_dept_response", "system", f"offered {alt_window['window_start']:%Y-%m-%d %H:%M} on {corridor_id}")
         return "reschedule_offered"
 
+    if refusals:
+        log_event(conn, defect_id, "no_fit", None, None, "system", "could not join an existing possession — " + "; ".join(refusals[:3]) + ("; …" if len(refusals) > 3 else ""))
     return "pending"
 
 
@@ -386,7 +427,7 @@ def _apply_modification_approval(conn, req, request_id: str, controller: str, re
         # Same joint-possession rules as auto-placement: queue behind my own
         # department's work in that window and share the group id with
         # whatever else is in it.
-        hours_by_dept, group_id = _window_usage(conn, req["target_plan_id"], str(window_row["window_id"]))
+        hours_by_dept, group_id, _ = _window_usage(conn, req["target_plan_id"], str(window_row["window_id"]))
         start = start + timedelta(hours=hours_by_dept.get(req["requesting_department"], 0.0))
         group_id = _join_possession(conn, req["target_plan_id"], str(window_row["window_id"]), group_id)
     conn.execute(

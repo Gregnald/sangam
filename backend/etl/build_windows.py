@@ -54,12 +54,16 @@ def _free_gaps(busy: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return gaps
 
 
-def _concurrency_for(duration_min: int) -> int:
-    if duration_min >= 300:
-        return 3
-    if duration_min >= 120:
-        return 2
-    return 1
+# How many departments may share a window is not decided here. The optimizer
+# works it out per possession from the safety compatibility matrix, the
+# physical separation of the jobs' work sites, and whether each department's
+# queue fits the window (see optimizer/model.py). The column is kept at the
+# number of departments purely as an upper bound for schema compatibility.
+MAX_DEPARTMENTS = 3
+
+
+def _concurrency_for(duration_min: int) -> int:  # noqa: ARG001 - kept for call sites
+    return MAX_DEPARTMENTS
 
 
 def build(horizon_days: int = 35) -> int:

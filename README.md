@@ -126,16 +126,46 @@ A block window is one candidate possession on one corridor. The model in
 `backend/optimizer/model.py` lets any number of jobs share it:
 
 - **Different departments work in parallel** — an ENGG crew on the track
-  and an S&T crew in the relay room don't queue behind each other. Whether
-  two departments may share a possession at all is `core.compatibility_matrix`
-  (with per-window overrides), and the window's `max_concurrent_depts` caps
-  how many can be on the section at once.
+  and an S&T crew in the relay room don't queue behind each other. How many
+  departments end up in one possession is **not a parameter** (the blueprint's
+  `cap_w` is gone): it is decided by the optimizer, bounded only by the
+  work-type compatibility matrix below (with the controller's per-window
+  overrides on top) — a pairwise constraint on the jobs, so a possession takes
+  as many crews as are mutually compatible.
+- **Job-level compatibility** (`optimizer/pair_compat.py`): whether two
+  *jobs* can share a possession is one matrix over kinds of work
+  (`core.work_type_compatibility`, 13 × 13). Each kind of work belongs to a
+  department, so department compatibility is inside it: tamping never
+  alongside a track-circuit repair, no welding beside an open cable trench,
+  substation work alongside anything. The controller flips cells on the
+  Compatibility tab; the solver and the live workflow use the same matrix,
+  and a request that can't join an existing possession records why.
+- **Incremental joint blocks**: a new request first tries every possession
+  already in the live week — if the matrix says it may share with every job
+  in one, it joins it (the possession grows), otherwise it opens a window of
+  its own, offers an alternate slot, or asks to bump.
+- **Pairwise model** (`ml/pair_compat_model.py`): a gradient-boosted
+  classifier over pair features (department pair, work types, durations,
+  corridor traffic) trained on the controller's own decisions
+  (`core.pair_decisions` — every matrix edit and per-block override is
+  logged, and the model retrains on each). Once it has ≥ 30 decisions it
+  becomes a soft preference in the objective for choosing among *allowed*
+  bundlings; it never relaxes the matrix.
+- **The matrix learns** (`ml/compatibility_learning.py`): the seeded defaults
+  are a prior; every per-window override the controller records is an
+  observation. After 5 overrides on a pair, a ≥ 80 % consistent pattern
+  replaces the seeded default (Beta posterior). The Compatibility tab shows
+  the evidence and which default is in effect.
 - **Same-department jobs run in sequence** — one crew, one job after
   another — so their durations add up and must fit the window.
 - The possession lasts as long as the busiest department's queue, and that
-  length is what the objective charges for (plus a fixed cost per block
-  event and a lateness cost past the due date). Placing a job always beats
-  leaving it out; the possession terms only decide *where* work goes.
+  length is what the objective charges for — **weighted by the corridor's
+  traffic** (trains/day relative to the zone's busiest corridor), so an hour
+  of downtime costs up to twice as much on a trunk line as on a quiet branch
+  and the solver bundles hardest where availability matters most — plus a
+  fixed cost per block event and a lateness cost past the due date. Placing a
+  job always beats leaving it out; the possession terms only decide *where*
+  work goes.
 
 Jobs sharing a possession carry the same `joint_block_group_id`. The Gantt
 stacks them in lanes with a light outline; the KPI panel counts them

@@ -4,10 +4,11 @@ from sqlalchemy import text
 
 
 def load_compatible_pairs(conn) -> set[frozenset[str]]:
-    rows = conn.execute(
-        text("SELECT dept_a, dept_b FROM core.compatibility_matrix WHERE compatible = TRUE")
-    ).mappings().all()
-    return {frozenset((r["dept_a"], r["dept_b"])) for r in rows}
+    """Seeded defaults with the learned flips from controller overrides
+    applied (see ml/compatibility_learning.py)."""
+    from ml.compatibility_learning import effective_compatible_pairs
+
+    return effective_compatible_pairs(conn)
 
 
 def load_window_overrides(conn, window_ids: list[str]) -> dict[str, dict[frozenset, bool]]:
@@ -40,13 +41,4 @@ def is_compatible(conn, dept_a: str, dept_b: str, window_id: str | None = None) 
         if override is not None:
             return bool(override)
 
-    row = conn.execute(
-        text(
-            """
-            SELECT compatible FROM core.compatibility_matrix
-            WHERE (dept_a = :a AND dept_b = :b) OR (dept_a = :b AND dept_b = :a)
-            """
-        ),
-        {"a": dept_a, "b": dept_b},
-    ).scalar()
-    return bool(row) if row is not None else False
+    return frozenset((dept_a, dept_b)) in load_compatible_pairs(conn)

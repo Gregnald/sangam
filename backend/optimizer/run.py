@@ -8,7 +8,8 @@ from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import text
 
-from app.compatibility import load_compatible_pairs, load_window_overrides
+from ml.pair_compat_model import PairPreference
+from optimizer.pair_compat import load_pair_compatibility
 from app.db import engine
 from app.goods_forecast import clip_windows, load_bands
 from optimizer.model import Job, Window, solve
@@ -101,7 +102,7 @@ def _load_jobs(conn, corridor_ids: list[str], horizon_start: date, horizon_end: 
                 GROUP BY a.defect_id
             )
             SELECT d.defect_id, d.corridor_id, d.department, d.priority_score, d.estimated_block_hours, d.due_date,
-                   l.planned_day
+                   l.planned_day, d.defect_type
             FROM core.defects d
             LEFT JOIN live l ON l.defect_id = d.defect_id
             WHERE d.corridor_id = ANY(:corridor_ids) AND d.priority_score IS NOT NULL
@@ -124,7 +125,10 @@ def _load_jobs(conn, corridor_ids: list[str], horizon_start: date, horizon_end: 
     ).mappings().all()
     locked_days = locked_days or set()
     return [
-        Job(str(r["defect_id"]), r["corridor_id"], r["department"], float(r["priority_score"]), float(r["estimated_block_hours"]), r["due_date"])
+        Job(
+            str(r["defect_id"]), r["corridor_id"], r["department"], float(r["priority_score"]), float(r["estimated_block_hours"]), r["due_date"],
+            defect_type=r["defect_type"],
+        )
         for r in rows
         # A job already planned on a frozen day stays exactly where it is —
         # it's carried over, not re-solved.
@@ -146,11 +150,21 @@ def _load_windows(conn, corridor_ids: list[str], horizon_start: date, horizon_en
         ),
         {"corridor_ids": corridor_ids, "hs": horizon_start, "he": horizon_end},
     ).mappings().all()
+    # Corridor busyness relative to the busiest corridor among these: the
+    # objective charges more for possession hours where the trains are.
+    traffic = {
+        r["corridor_id"]: int(r["train_count"] or 0)
+        for r in conn.execute(text("SELECT corridor_id, train_count FROM core.corridors WHERE corridor_id = ANY(:ids)"), {"ids": corridor_ids}).mappings()
+    }
+    busiest = max(traffic.values(), default=0) or 1
     out = []
     for r in rows:
         duration_h = (r["window_end"] - r["window_start"]).total_seconds() / 3600.0
         out.append(
-            Window(str(r["window_id"]), r["corridor_id"], r["window_start"], r["window_end"], duration_h, r["max_concurrent_depts"])
+            Window(
+                str(r["window_id"]), r["corridor_id"], r["window_start"], r["window_end"], duration_h, r["max_concurrent_depts"],
+                traffic_factor=traffic.get(r["corridor_id"], 0) / busiest,
+            )
         )
     # Carve the Control Office's goods-train forecast out of the timetable
     # gaps — a freight path expected through a slot makes that slot
@@ -237,11 +251,10 @@ def run_plan(
         corridor_ids = _load_corridor_ids(conn, zone)
         jobs = _load_jobs(conn, corridor_ids, horizon_start, horizon_end)
         windows = _load_windows(conn, corridor_ids, horizon_start, horizon_end)
-        compatible_pairs = load_compatible_pairs(conn)
-        window_overrides = load_window_overrides(conn, [w.window_id for w in windows])
+        pair_compat = load_pair_compatibility(conn, [w.window_id for w in windows])
         logger.info("zone=%s corridors=%d jobs=%d windows=%d", zone, len(corridor_ids), len(jobs), len(windows))
 
-        result = solve(jobs, windows, compatible_pairs=compatible_pairs, window_overrides=window_overrides, time_limit_s=time_limit_s)
+        result = solve(jobs, windows, pair_compat=pair_compat, pair_preference=PairPreference(), time_limit_s=time_limit_s)
         logger.info(
             "solve status=%s objective=%.1f scheduled=%d/%d in %.1fs",
             result.status, result.objective_value, len(result.scheduled_defect_ids), len(jobs), result.solve_seconds,
@@ -324,9 +337,8 @@ def regenerate_current_month_plan(zone: str | None = None, time_limit_s: int = 1
         all_windows = _load_windows(conn, corridor_ids, start, end)
         free_windows = [w for w in all_windows if not is_locked(w.start.date())]
 
-        compatible_pairs = load_compatible_pairs(conn)
-        window_overrides = load_window_overrides(conn, [w.window_id for w in free_windows])
-        result = solve(jobs, free_windows, compatible_pairs=compatible_pairs, window_overrides=window_overrides, time_limit_s=time_limit_s)
+        pair_compat = load_pair_compatibility(conn, [w.window_id for w in free_windows])
+        result = solve(jobs, free_windows, pair_compat=pair_compat, pair_preference=PairPreference(), time_limit_s=time_limit_s)
         logger.info(
             "regenerate current month zone=%s free_windows=%d/%d jobs=%d scheduled=%d",
             zone, len(free_windows), len(all_windows), len(jobs), len(result.scheduled_defect_ids),
