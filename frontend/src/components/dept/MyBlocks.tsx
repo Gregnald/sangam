@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { CorridorGantt } from "../CorridorGantt";
-import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, EVENT_LABEL, blockDay, displayStatus, possessionLabel, type DisplayStatus } from "../../lib/requestStatus";
+import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, EVENT_LABEL, blockDay, displayStatus, isRescheduled, possessionLabel, type DisplayStatus } from "../../lib/requestStatus";
 import type { DefectRequest } from "../../types/api";
 
 const SEV_COLOR: Record<string, string> = { A: "text-red-400", B: "text-amber-400", C: "text-emerald-400" };
@@ -47,6 +47,7 @@ function BlockCard({ r }: { r: DefectRequest }) {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
             <span className={`text-[11px] uppercase font-semibold whitespace-nowrap ${DISPLAY_COLOR[ds]}`}>{DISPLAY_LABEL[ds]}</span>
+            {isRescheduled(r) && <span className="text-[10px] font-semibold uppercase text-blue-400 border border-blue-400/40 px-1 py-px">Rescheduled</span>}
             <span className="text-xs font-semibold text-ops-text mono">{r.corridorId}</span>
             <span className="text-xs text-ops-text">{r.defectType.replace(/_/g, " ")}</span>
             <span className={`text-[11px] font-semibold ${SEV_COLOR[r.severityCode]}`}>Sev {r.severityCode}</span>

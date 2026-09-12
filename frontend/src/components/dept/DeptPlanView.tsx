@@ -90,7 +90,7 @@ export function DeptPlanView() {
         {month ? (
           <MonthPlanCard plan={month} weeklyPlans={weekly} activeLabel={planTimeState(month.horizonStart, month.horizonEnd) === "current"} />
         ) : (
-          <p className="text-xs text-ops-muted p-4 border border-ops-border">The controller hasn't published a monthly plan for {selectedZone} yet.</p>
+          <p className="text-xs text-ops-muted p-4 border border-ops-border">No approved monthly plan for {selectedZone}.</p>
         )}
       </div>
 
@@ -110,7 +110,7 @@ export function DeptPlanView() {
             activeLabel={planTimeState(week.horizonStart, week.horizonEnd) === "current"}
           />
         ) : (
-          <p className="text-xs text-ops-muted p-4 border border-ops-border">The controller hasn't published a weekly plan for {selectedZone} yet.</p>
+          <p className="text-xs text-ops-muted p-4 border border-ops-border">No approved weekly plan for {selectedZone}.</p>
         )}
       </div>
     </div>

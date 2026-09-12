@@ -64,7 +64,7 @@ function SnapshotRowView({ entry }: { entry: PlanHistoryEntry }) {
           {corridorId ? (
             <SnapshotGantt rows={filtered} rangeStart={range.start} rangeEnd={range.end} />
           ) : (
-            <p className="text-xs text-ops-muted p-3 border border-ops-border">Pick a corridor to see this snapshot's day-by-day schedule.</p>
+            <p className="text-xs text-ops-muted p-3 border border-ops-border">Select a corridor.</p>
           )}
         </div>
       )}
@@ -108,10 +108,6 @@ function ModelVersions() {
   }, []);
   return (
     <div className="space-y-2">
-      <p className="text-[11px] text-ops-muted">
-        Every retrain of the priority ranker. A candidate is promoted only when its holdout ranking score is at least as good as the model in use;
-        controller approve/reject decisions are folded in as label nudges, so the count of decisions used shows how much human feedback each version learned from.
-      </p>
       <div className="border border-ops-border overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-ops-inset text-ops-muted uppercase text-[10px]">
@@ -136,7 +132,7 @@ function ModelVersions() {
                 <td className="p-2 text-ops-muted mono whitespace-nowrap">{new Date(v.trainedAt).toLocaleString()}</td>
                 <td className="p-2 text-ops-text mono">{typeof v.metrics?.holdout_spearman === "number" ? (v.metrics.holdout_spearman as number).toFixed(3) : "—"}</td>
                 <td className="p-2 text-ops-text mono">{String(v.metrics?.n_controller_decisions_used ?? "—")}</td>
-                <td className={`p-2 font-semibold ${v.promoted ? "text-emerald-400" : "text-ops-muted"}`}>{v.promoted ? "IN USE" : "challenger (kept)"}</td>
+                <td className={`p-2 font-semibold ${v.promoted ? "text-emerald-400" : "text-ops-muted"}`}>{v.promoted ? "IN USE" : "challenger"}</td>
                 <td className="p-2 text-ops-muted mono truncate max-w-xs" title={v.artifactPath}>
                   {v.artifactPath.split(/[\\/]/).pop()}
                 </td>
@@ -149,7 +145,7 @@ function ModelVersions() {
   );
 }
 
-export function HistoryPanel({ scope, department }: { scope: "own" | "all"; department?: string }) {
+export function HistoryPanel({ scope }: { scope: "own" | "all" }) {
   const [sub, setSub] = useState<SubTab>("Plans");
   const [entries, setEntries] = useState<PlanHistoryEntry[]>([]);
   const [modifications, setModifications] = useState<ModificationRequest[]>([]);
@@ -191,23 +187,14 @@ export function HistoryPanel({ scope, department }: { scope: "own" | "all"; depa
         ))}
       </div>
 
-      {sub === "Backlog" && <BacklogHistory scope={scope} department={department} />}
+      {sub === "Backlog" && <BacklogHistory scope={scope} />}
       {sub === "Model versions" && <ModelVersions />}
       {sub === "Modifications" && (
-        <div>
-          <p className="text-[11px] text-ops-muted mb-2">Reschedule offers and priority-bump requests that have been decided — approved, rejected, or lapsed because their window passed.</p>
-          <ModificationList items={decided} mode="controller" />
-        </div>
+        <ModificationList items={decided} mode="controller" />
       )}
 
       {sub === "Plans" && (
       <div className="space-y-6">
-      <p className="text-[11px] text-ops-muted">
-        {scope === "all"
-          ? "Every generation and approval of every plan, as proposed and as approved, plus plans that are past, rejected or superseded."
-          : `${department ?? "Your department"}'s slice of every plan snapshot, plus plans that are past, rejected or superseded.`}
-      </p>
-
       <div>
         <h3 className="text-xs font-semibold text-ops-text mb-2">Schedule History</h3>
         <div className="space-y-1.5">
@@ -225,7 +212,7 @@ export function HistoryPanel({ scope, department }: { scope: "own" | "all"; depa
         weeklyPlans={plans.filter((wp) => wp.horizonType === "weekly")}
         zones={zones}
         defaultZone={selectedZone}
-        emptyText="Nothing here — every monthly plan so far is either still live or awaiting a decision."
+        emptyText="No past monthly plans."
       />
       <PlanPeriodBrowser
         title="Past, rejected & superseded weekly plans"
@@ -234,7 +221,7 @@ export function HistoryPanel({ scope, department }: { scope: "own" | "all"; depa
         weeklyPlans={plans.filter((wp) => wp.horizonType === "weekly")}
         zones={zones}
         defaultZone={selectedZone}
-        emptyText="Nothing here — every weekly plan so far is either still live or awaiting a decision."
+        emptyText="No past weekly plans."
       />
       </div>
       )}

@@ -18,6 +18,7 @@ from optimizer.run import (
     regenerate_current_month_plan,
     reject_plan,
 )
+from workflow.engine import reschedule_overdue
 
 router = APIRouter(prefix="/api/v1/plans", tags=["plans"])
 CamelModel = ConfigDict(alias_generator=to_camel, populate_by_name=True)
@@ -148,6 +149,8 @@ def approve(plan_id: str, user: CurrentUser = Depends(require_role("CONTROLLER")
         approve_plan(plan_id, user.username)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    # A newly live plan is where overdue backlog can now find a slot.
+    reschedule_overdue()
     row = db.execute(text("SELECT * FROM plan.block_plans WHERE plan_id = :id"), {"id": plan_id}).mappings().first()
     return BlockPlan.model_validate(dict(row))
 

@@ -19,7 +19,7 @@ const EVENT_TONE: Record<string, string> = {
   cleared: "text-ops-muted",
 };
 
-export function BacklogHistory({ scope, department }: { scope: "own" | "all"; department?: string }) {
+export function BacklogHistory({ scope }: { scope: "own" | "all" }) {
   const [events, setEvents] = useState<DefectEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [type, setType] = useState("");
@@ -52,10 +52,6 @@ export function BacklogHistory({ scope, department }: { scope: "own" | "all"; de
 
   return (
     <div className="space-y-2">
-      <p className="text-[11px] text-ops-muted">
-        {scope === "all" ? "Every status change of every request, newest first" : `Every status change of ${department ?? "your department"}'s requests, newest first`} — submissions,
-        placements, offers and responses, bumps, lapses, completions.
-      </p>
       <div className="flex items-center gap-2 flex-wrap text-xs">
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search corridor, type, details, who…" className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1 w-72" />
         <select value={type} onChange={(e) => setType(e.target.value)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">

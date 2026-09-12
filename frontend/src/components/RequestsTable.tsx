@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { DefectRequest } from "../types/api";
-import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, displayStatus, type DisplayStatus } from "../lib/requestStatus";
+import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, displayStatus, isRescheduled, type DisplayStatus } from "../lib/requestStatus";
 
 const SEV_COLOR: Record<string, string> = { A: "text-red-400", B: "text-amber-400", C: "text-emerald-400" };
 
@@ -156,7 +156,14 @@ export function RequestsTable({
                   <td className={`p-2 font-semibold ${SEV_COLOR[r.severityCode]}`}>{r.severityCode}</td>
                   <td className="p-2 text-ops-text mono">{r.priorityScore?.toFixed(1) ?? "—"}</td>
                   <td className={`p-2 mono ${r.isOverdue ? "text-red-400" : "text-ops-muted"}`}>{r.dueDate}</td>
-                  <td className={`p-2 ${DISPLAY_COLOR[ds]}`}>{DISPLAY_LABEL[ds]}</td>
+                  <td className={`p-2 ${DISPLAY_COLOR[ds]}`}>
+                    {DISPLAY_LABEL[ds]}
+                    {isRescheduled(r) && (
+                      <span className="ml-2 text-[10px] font-semibold uppercase text-blue-400 border border-blue-400/40 px-1 py-px" title={r.lastEventDetails ?? undefined}>
+                        Rescheduled
+                      </span>
+                    )}
+                  </td>
                   <td className="p-2 text-ops-muted mono whitespace-nowrap">{fmtBlock(r)}</td>
                   <td className="p-2 text-ops-muted mono">{r.planPeriodLabel ?? "—"}</td>
                   <td className="p-2 text-ops-muted">{r.deferCount > 0 ? r.deferCount : ""}</td>

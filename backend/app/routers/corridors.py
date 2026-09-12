@@ -81,6 +81,66 @@ def get_corridors(zone: str | None = Query(None), search: str | None = Query(Non
     return [Corridor.model_validate(dict(r)) for r in rows]
 
 
+def _plan_scope(plan_id: str | None) -> tuple[str, dict]:
+    """Which plan(s) a schedule view draws assignments from — shared by the
+    per-corridor Gantt and the zone-wide block counts so both agree.
+
+    Viewing one specific plan (e.g. a just-generated, still-unapproved
+    monthly/weekly plan) shows exactly what that plan proposes regardless
+    of whether it's live yet — otherwise a freshly solved plan looks like
+    it scheduled nothing at all, since nothing it did is "approved" yet.
+
+    Live view: every approved plan — except that once a week has its own
+    approved weekly plan, that is the authoritative schedule for those days,
+    and the monthly plan's copy of the same week must not be drawn on top of
+    it (the same job would show twice, possibly at two different times).
+    """
+    if plan_id:
+        return "a.plan_id = :plan_id", {"plan_id": plan_id}
+    return (
+        """p.status = 'approved'
+              AND NOT (
+                    p.horizon_type = 'monthly'
+                    AND EXISTS (
+                        SELECT 1 FROM plan.block_plans w
+                        WHERE w.status = 'approved' AND w.horizon_type = 'weekly' AND w.zone IS NOT DISTINCT FROM p.zone
+                          AND a.allocated_start::date BETWEEN w.horizon_start AND w.horizon_end
+                    )
+              )""",
+        {},
+    )
+
+
+@router.get("/corridors/block-counts", response_model=dict[str, int])
+def corridor_block_counts(
+    zone: str = Query(...),
+    start: date = Query(...),
+    end: date = Query(...),
+    plan_id: str | None = Query(None, alias="planId"),
+    db: Session = Depends(get_db),
+):
+    """Blocks per corridor in a zone over a date range — the number the
+    corridor's Gantt would draw for the same range/plan. Corridors with no
+    blocks are omitted."""
+    plan_clause, params = _plan_scope(plan_id)
+    params.update({"zone": zone, "s": start, "e": end})
+    rows = db.execute(
+        text(
+            f"""
+            SELECT a.corridor_id, count(*) AS n
+            FROM plan.block_assignments a
+            JOIN plan.block_plans p ON p.plan_id = a.plan_id
+            JOIN core.corridors c ON c.corridor_id = a.corridor_id
+            WHERE c.zone = :zone AND {plan_clause}
+              AND a.allocated_start::date >= :s AND a.allocated_start::date <= :e
+            GROUP BY a.corridor_id
+            """
+        ),
+        params,
+    ).mappings().all()
+    return {r["corridor_id"]: int(r["n"]) for r in rows}
+
+
 @router.get("/corridors/{corridor_id}/schedule", response_model=CorridorSchedule)
 def corridor_schedule(
     corridor_id: str,
@@ -101,35 +161,15 @@ def corridor_schedule(
         {"c": corridor_id, "s": start, "e": end},
     ).mappings().all()
 
-    # Viewing one specific plan (e.g. a just-generated, still-unapproved
-    # monthly/weekly plan) shows exactly what that plan proposes regardless
-    # of whether it's live yet — otherwise a freshly solved plan looks like
-    # it scheduled nothing at all, since nothing it did is "approved" yet.
-    if plan_id:
-        plan_clause, params = "a.plan_id = :plan_id", {"c": corridor_id, "s": start, "e": end, "plan_id": plan_id}
-    else:
-        # Live view: every approved plan — except that once a week has its
-        # own approved weekly plan, that is the authoritative schedule for
-        # those days, and the monthly plan's copy of the same week must not
-        # be drawn on top of it (the same job would show twice, possibly at
-        # two different times).
-        plan_clause = """p.status = 'approved'
-              AND NOT (
-                    p.horizon_type = 'monthly'
-                    AND EXISTS (
-                        SELECT 1 FROM plan.block_plans w
-                        WHERE w.status = 'approved' AND w.horizon_type = 'weekly' AND w.zone IS NOT DISTINCT FROM p.zone
-                          AND a.allocated_start::date BETWEEN w.horizon_start AND w.horizon_end
-                    )
-              )"""
-        params = {"c": corridor_id, "s": start, "e": end}
+    plan_clause, params = _plan_scope(plan_id)
+    params.update({"c": corridor_id, "s": start, "e": end})
 
     assignment_rows = db.execute(
         text(
             f"""
             SELECT a.assignment_id, a.defect_id, a.department, a.allocated_start, a.allocated_end, a.joint_block_group_id,
                    d.defect_type, d.severity_code, d.requested_by, d.asset_id, d.source_system, d.estimated_block_hours,
-                   d.due_date, d.priority_score, d.speed_restriction_kmph,
+                   d.due_date, d.priority_score, d.speed_restriction_kmph, d.rescheduled_at,
                    p.status AS plan_status, p.period_label AS plan_period_label
             FROM plan.block_assignments a
             JOIN plan.block_plans p ON p.plan_id = a.plan_id

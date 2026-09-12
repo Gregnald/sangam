@@ -179,6 +179,10 @@ CREATE TABLE IF NOT EXISTS core.defects (
     priority_explanation      JSONB,
     updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Set when an overdue request was automatically placed into the upcoming
+-- week by the clock sweep (workflow/engine.py::reschedule_overdue); cleared
+-- whenever the request returns to the backlog.
+ALTER TABLE core.defects ADD COLUMN IF NOT EXISTS rescheduled_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_defects_status_sev ON core.defects (workflow_status, severity_code);
 CREATE INDEX IF NOT EXISTS idx_defects_corridor ON core.defects (corridor_id);
 CREATE INDEX IF NOT EXISTS idx_defects_department ON core.defects (department);

@@ -107,7 +107,6 @@ function BacklogUploadCard({ department, label }: { department: string; label: s
               {result.stillPending > 0 && (
                 <>
                   , <span className="text-ops-muted">{result.stillPending} still pending</span>
-                  {" "}(no approved weekly plan yet to slot into — they'll be included the next time one is generated)
                 </>
               )}
             </p>
@@ -148,7 +147,7 @@ function ScheduleUploadCard() {
 
   async function upload() {
     if (!file) return;
-    if (replace && !window.confirm(`Load this file as the timetable in force from ${effectiveFrom}? Existing plans and scheduled blocks are not modified; from that day on, new plans and new requests are scheduled against this timetable.`)) return;
+    if (replace && !window.confirm(`Load this file as the timetable in force from ${effectiveFrom}?`)) return;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -171,9 +170,9 @@ function ScheduleUploadCard() {
     <div className="border border-ops-border p-3">
       <h3 className="text-xs font-semibold text-ops-text mb-2">Railway Schedule (train timetable)</h3>
       <div className="text-[11px] text-ops-muted mb-2">
-        <p className="mb-1">Timetables in force (each plan uses the one in force on its days):</p>
+        <p className="mb-1">Timetable versions</p>
         {versions.length === 0 ? (
-          <p className="text-amber-400">none loaded — run the pipeline</p>
+          <p className="text-amber-400">No timetable loaded</p>
         ) : (
           <ul className="space-y-0.5">
             {versions.map((v) => (
@@ -190,18 +189,16 @@ function ScheduleUploadCard() {
         )}
       </div>
       <p className="text-[11px] text-ops-muted mb-2">
-        Columns: <span className="mono">train_number, train_name, station_code, arrival, departure, day</span> — one row per stop, in stop order. Until a
-        file is uploaded the bundled <span className="mono">mapData/schedules.json</span> is used.
+        Columns: <span className="mono">train_number, train_name, station_code, arrival, departure, day</span>
       </p>
       <label className="flex items-center gap-2 text-[11px] text-ops-muted mb-1 cursor-pointer">
         <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-        Load as a new timetable version (uncheck to append its trains to the current one)
+        Load as a new timetable version
       </label>
       {replace && (
         <label className="flex items-center gap-2 text-[11px] text-ops-muted mb-2">
           In force from
           <input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-0.5" />
-          <span>— existing plans are never modified; the next generate / regenerate uses it for days it covers</span>
         </label>
       )}
       <div className="flex items-center gap-2">
@@ -217,11 +214,6 @@ function ScheduleUploadCard() {
             {result.replaced ? `New timetable version in force from ${result.effectiveFrom}. ` : "Appended. "}
             Read {result.rowsRead} rows, used {result.rowsUsed} · corridors added {result.corridorsAdded} · corridors updated {result.corridorsUpdated} ·
             traversals {result.traversalsAdded} · free windows added {result.windowsAdded}
-            {result.replaced && (
-              <>
-                {" "}· <span className="text-emerald-400">existing plans and scheduled blocks are unchanged</span> — generate or regenerate a plan to schedule against the new timetable
-              </>
-            )}
           </p>
           {result.unknownStations.length > 0 && (
             <details>
@@ -262,8 +254,7 @@ function GoodsForecastUploadCard() {
     <div className="border border-ops-border p-3">
       <h3 className="text-xs font-semibold text-ops-text mb-2">Goods Train Forecast (Control Office)</h3>
       <p className="text-[11px] text-ops-muted mb-2">
-        Columns: <span className="mono">corridor_id, forecast_date, band_start, band_end, train_count</span> — one row per corridor, date and time band
-        (HH:MM) in which the COA expects freight paths. The planner treats each band as occupied when generating weekly and monthly plans.
+        Columns: <span className="mono">corridor_id, forecast_date, band_start, band_end, train_count</span>
       </p>
       <div className="flex items-center gap-2">
         <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-[11px] text-ops-muted flex-1" />
@@ -276,7 +267,7 @@ function GoodsForecastUploadCard() {
         <div className="text-[11px] text-ops-muted mt-2 space-y-1">
           <p>
             Read {result.rowsRead} rows · {result.bandsInserted} new bands · {result.bandsUpdated} updated ·{" "}
-            <span className="text-amber-400">{result.windowsAffected} candidate block windows now clipped or removed</span>
+            <span className="text-amber-400">{result.windowsAffected} block windows clipped</span>
           </p>
           {result.errors.length > 0 && (
             <details>
@@ -297,15 +288,7 @@ function GoodsForecastUploadCard() {
 export function IngestionPage() {
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-sm font-semibold text-ops-text mb-1">Data Ingestion</h2>
-        <p className="text-xs text-ops-muted">
-          Upload each department's backlog as an .xlsx export (optionally with <span className="mono">requested_window_start</span> /{" "}
-          <span className="mono">requested_window_end</span> columns for a preferred block time), the network's train schedule as an .xlsx
-          timetable, and the Control Office goods-train forecast. Backlog rows land in the request lifecycle exactly as if the department had
-          submitted them directly.
-        </p>
-      </div>
+      <h2 className="text-sm font-semibold text-ops-text">Data Ingestion</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {DEPARTMENTS.map((d) => (
           <BacklogUploadCard key={d.value} department={d.value} label={`${d.label} Backlog`} />

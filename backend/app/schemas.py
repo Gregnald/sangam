@@ -77,6 +77,8 @@ class DefectRequest(BaseModel):
     # upcoming / in progress / completed.
     is_overdue: bool = False
     execution_state: Literal["upcoming", "in_progress", "completed"] | None = None
+    # When the clock sweep placed this overdue request into the upcoming week.
+    rescheduled_at: datetime | None = None
     last_event_type: str | None = None
     last_event_at: datetime | None = None
     last_event_details: str | None = None
@@ -292,6 +294,7 @@ class ScheduleAssignment(BaseModel):
     due_date: date | None = None
     priority_score: float | None = None
     speed_restriction_kmph: int | None = None
+    rescheduled_at: datetime | None = None
 
 
 class ScheduleTraversal(BaseModel):

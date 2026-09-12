@@ -218,15 +218,10 @@ def place_existing_defect(defect_id: str) -> str:
         )
 
 
-def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | None, duration_hours: float, score: float, requested_start: datetime | None, requested_end: datetime | None, preemption_margin: float, defect_type: str | None = None) -> str:
-    if not zone:
-        return "pending"
-
-    active_plan = _active_weekly_plan(conn, zone)
-    if not active_plan:
-        return "pending"
-
-    windows = conn.execute(
+def _candidate_windows(conn, corridor_id: str, start: date, end: date) -> list[dict]:
+    """The corridor's free windows on these days, with the Control Office
+    goods-train bands carved out — exactly what the optimizer would see."""
+    rows = conn.execute(
         text(
             """
             SELECT window_id, corridor_id, window_start, window_end, max_concurrent_depts,
@@ -236,12 +231,20 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
             ORDER BY window_start
             """
         ),
-        {"corridor": corridor_id, "ws": active_plan["horizon_start"], "we": active_plan["horizon_end"]},
+        {"corridor": corridor_id, "ws": start, "we": end},
     ).mappings().all()
-    windows = clip_window_rows(
-        [dict(w) for w in windows],
-        load_bands(conn, [corridor_id], active_plan["horizon_start"], active_plan["horizon_end"]),
-    )
+    return clip_window_rows([dict(w) for w in rows], load_bands(conn, [corridor_id], start, end))
+
+
+def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | None, duration_hours: float, score: float, requested_start: datetime | None, requested_end: datetime | None, preemption_margin: float, defect_type: str | None = None) -> str:
+    if not zone:
+        return "pending"
+
+    active_plan = _active_weekly_plan(conn, zone)
+    if not active_plan:
+        return "pending"
+
+    windows = _candidate_windows(conn, corridor_id, active_plan["horizon_start"], active_plan["horizon_end"])
 
     # A request pinned to a specific window only auto-schedules if it fits
     # *at that time* — anything else is a different deal than what the
@@ -394,7 +397,7 @@ def respond_to_reschedule(request_id: str, accept: bool, responder: str) -> None
                 text("UPDATE plan.modification_requests SET status = 'rejected', decided_at = now(), decided_by = :by WHERE request_id = :id"),
                 {"id": request_id, "by": responder},
             )
-            conn.execute(text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
+            conn.execute(text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
             log_event(conn, req["defect_id"], "reschedule_rejected", "awaiting_dept_response", "pending", responder, "department declined the offered window; deferred")
 
 
@@ -414,7 +417,7 @@ def _apply_modification_approval(conn, req, request_id: str, controller: str, re
     if req["request_type"] == "preemption":
         conn.execute(text("DELETE FROM plan.block_assignments WHERE assignment_id = (SELECT assignment_id FROM plan.block_assignments WHERE defect_id = :d AND plan_id = :p LIMIT 1)"), {"d": req["affected_defect_id"], "p": req["target_plan_id"]})
         conn.execute(
-            text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, updated_at = now() WHERE defect_id = :id"),
+            text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now() WHERE defect_id = :id"),
             {"id": req["affected_defect_id"]},
         )
         _notify(conn, req["affected_department"], f"Your scheduled block on {req['proposed_corridor_id']} was bumped by a higher-priority {req['requesting_department']} request. It has returned to the backlog.", request_id)
@@ -463,7 +466,7 @@ def decide_modification(request_id: str, approve: bool, controller: str, reason:
                 text("UPDATE plan.modification_requests SET status = 'rejected', decided_at = now(), decided_by = :by, decision_reason = :reason WHERE request_id = :id"),
                 {"id": request_id, "by": controller, "reason": reason},
             )
-            conn.execute(text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
+            conn.execute(text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
             _notify(conn, req["requesting_department"], f"Controller rejected your requested schedule change on {req['proposed_corridor_id'] or ''}: {reason or 'no reason given'}.", request_id)
             log_event(conn, req["defect_id"], "modification_rejected", "awaiting_controller", "pending", controller, f"controller rejected {req['request_type']}: {reason or 'no reason given'}; deferred")
         else:
@@ -474,3 +477,123 @@ def decide_modification(request_id: str, approve: bool, controller: str, reason:
     # a label nudge) and rescore the backlog right away rather than waiting
     # for the next unrelated ingestion to happen to trigger it.
     _retrain_and_rescore()
+
+
+def _upcoming_week_plan(conn, zone: str, today: date) -> tuple[dict, date, date, str] | None:
+    """The live plan for next week: its own approved weekly plan if one
+    exists, otherwise the approved monthly plan covering it (the monthly
+    plan's copy of a week is the live schedule until a weekly plan
+    supersedes it). Returns (plan, week_start, week_end, week_label)."""
+    start, end, label = week_bounds(today + timedelta(days=7))
+    weekly = _active_weekly_plan(conn, zone, anchor=start)
+    if weekly:
+        return weekly, start, end, label
+    monthly = conn.execute(
+        text(
+            """
+            SELECT * FROM plan.block_plans
+            WHERE zone = :zone AND horizon_type = 'monthly' AND status = 'approved'
+              AND horizon_start <= :start AND horizon_end >= :start
+            ORDER BY approved_at DESC LIMIT 1
+            """
+        ),
+        {"zone": zone, "start": start},
+    ).mappings().first()
+    if monthly:
+        return dict(monthly), start, min(end, monthly["horizon_end"]), label
+    return None
+
+
+def reschedule_overdue(today: date | None = None) -> dict:
+    """Place every overdue backlog request (pending, past its due date) into
+    the upcoming week's live plan wherever it fits — joining an existing
+    possession by preference, under the same queue and compatibility rules
+    as a fresh request. Nothing is bumped and nothing is offered: a job that
+    doesn't fit simply stays overdue until the next weekly solve. A placed
+    job is marked `rescheduled_at` and its department is told.
+
+    Run by the clock once per operational day and after a plan approval
+    (a new upcoming-week plan is the moment fits appear)."""
+    today = today or date.today()
+    placed = 0
+    tried = 0
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT d.defect_id, d.department, d.corridor_id, d.defect_type, d.estimated_block_hours, d.due_date, c.zone
+                FROM core.defects d JOIN core.corridors c ON c.corridor_id = d.corridor_id
+                WHERE d.workflow_status = 'pending' AND d.due_date < :today AND d.priority_score IS NOT NULL AND c.zone IS NOT NULL
+                ORDER BY d.priority_score DESC, d.due_date
+                """
+            ),
+            {"today": today},
+        ).mappings().all()
+        if not rows:
+            return {"tried": 0, "rescheduled": 0}
+
+        plans: dict[str, tuple[dict, date, date, str] | None] = {}
+        for r in rows:
+            zone = r["zone"]
+            if zone not in plans:
+                plans[zone] = _upcoming_week_plan(conn, zone, today)
+            target = plans[zone]
+            if not target:
+                continue
+            plan, week_start, week_end, week_label = target
+            tried += 1
+            duration_hours = float(r["estimated_block_hours"])
+            corridor_id = r["corridor_id"]
+            windows = _candidate_windows(conn, corridor_id, week_start, week_end)
+            pair_compat = load_pair_compatibility(conn, [str(w["window_id"]) for w in windows])
+
+            # Same preference as a fresh request: an existing possession
+            # first (no extra outage), then the earliest free window.
+            usage = {str(w["window_id"]): _window_usage(conn, plan["plan_id"], str(w["window_id"])) for w in windows}
+            ranked = sorted(windows, key=lambda w: (0 if usage[str(w["window_id"])][0] else 1, w["window_start"]))
+            fit = None
+            for w in ranked:
+                if w["duration_hours"] < duration_hours:
+                    continue
+                hours_by_dept, _, sites = usage[str(w["window_id"])]
+                ok, _reason = _fits(conn, hours_by_dept, r["department"], duration_hours, w["duration_hours"], window_id=str(w["window_id"]), sites=sites, defect_type=r["defect_type"], pair_compat=pair_compat)
+                if ok:
+                    fit = w
+                    break
+            if not fit:
+                continue
+
+            hours_by_dept, group_id, _ = usage[str(fit["window_id"])]
+            allocated_start = fit["window_start"] + timedelta(hours=hours_by_dept.get(r["department"], 0.0))
+            allocated_end = allocated_start + timedelta(hours=duration_hours)
+            group_id = _join_possession(conn, plan["plan_id"], str(fit["window_id"]), group_id)
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO plan.block_assignments (plan_id, window_id, corridor_id, defect_id, department, allocated_start, allocated_end, joint_block_group_id)
+                    VALUES (:plan, :win, :corridor, :defect, :dept, :start, :end, :group)
+                    """
+                ),
+                {"plan": plan["plan_id"], "win": str(fit["window_id"]), "corridor": corridor_id, "defect": r["defect_id"], "dept": r["department"], "start": allocated_start, "end": allocated_end, "group": group_id},
+            )
+            conn.execute(
+                text("UPDATE core.defects SET workflow_status = 'scheduled', rescheduled_at = now(), updated_at = now() WHERE defect_id = :id"),
+                {"id": r["defect_id"]},
+            )
+            days_late = (today - r["due_date"]).days
+            plural = "s" if days_late != 1 else ""
+            joined = " — joined an existing possession" if group_id else ""
+            log_event(
+                conn, str(r["defect_id"]), "auto_rescheduled", "pending", "scheduled", "system",
+                f"overdue by {days_late} day{plural} (due {r['due_date']}); rescheduled to {allocated_start:%Y-%m-%d %H:%M}–{allocated_end:%H:%M} on {corridor_id} (week {week_label}){joined}",
+            )
+            work = (r["defect_type"] or "").replace("_", " ")
+            _notify(
+                conn, r["department"],
+                f"Overdue request on {corridor_id} ({work}, due {r['due_date']}) was rescheduled to {allocated_start:%a %d %b %H:%M}–{allocated_end:%H:%M}.",
+            )
+            placed += 1
+
+    if placed:
+        logger.info("overdue sweep: rescheduled %d of %d overdue requests into the upcoming week", placed, tried)
+    return {"tried": tried, "rescheduled": placed}

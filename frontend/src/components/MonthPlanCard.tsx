@@ -128,7 +128,7 @@ function WeekRow({ start, end, state, approved, zone, planId }: { start: Date; e
         <span className="text-[11px] text-ops-text">
           Week of {start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – {end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{" "}
           <span className={`font-semibold ${stateColor}`}>{stateLabel}</span>
-          {!approved && <span className="text-[10px] text-ops-muted ml-2">(no approved weekly plan yet — showing this monthly plan's proposal)</span>}
+          {!approved && <span className="text-[10px] text-ops-muted ml-2">(from monthly plan)</span>}
         </span>
         <span className="text-ops-muted text-[10px]">{open ? "▲" : "▼"}</span>
       </button>

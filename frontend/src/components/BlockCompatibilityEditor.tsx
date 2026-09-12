@@ -63,13 +63,14 @@ export function BlockCompatibilityEditor({ zone }: { zone: string | null }) {
     <div className="space-y-3">
       <WorkTypeMatrix />
       <LearnedCompatibility refreshKey={learnedKey} />
+      <h3 className="text-xs font-semibold text-ops-text pt-1">Block overrides</h3>
       <div className="flex items-center gap-3">
         <CorridorPicker zone={zone} value={corridorId} onChange={setCorridorId} />
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1" />
       </div>
       {corridorId && (
         <select value={windowId ?? ""} onChange={(e) => setWindowId(e.target.value || null)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1 w-full max-w-lg">
-          <option value="">{windows.length === 0 ? "No blocks/windows on this corridor for that day" : "Select a block…"}</option>
+          <option value="">{windows.length === 0 ? "No block windows on this day" : "Select a block…"}</option>
           {windows.map((w) => (
             <option key={w.windowId} value={w.windowId}>
               {new Date(w.windowStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} – {new Date(w.windowEnd).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (max {w.maxConcurrentDepts} depts)

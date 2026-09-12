@@ -16,7 +16,7 @@ _BASE_QUERY = """
     SELECT d.defect_id, d.source_system, d.asset_id, d.corridor_id, c.zone, d.defect_type, d.severity_code, d.department,
            d.detected_date, d.due_date, d.speed_restriction_kmph, d.estimated_block_hours,
            d.requested_window_start, d.requested_window_end, d.requested_by, d.defer_count,
-           d.workflow_status, d.priority_score, d.priority_explanation, d.updated_at,
+           d.workflow_status, d.priority_score, d.priority_explanation, d.updated_at, d.rescheduled_at,
            live.allocated_start, live.allocated_end, live.plan_id, live.plan_period_label, live.joint_block_group_id,
            live.group_departments, live.group_size,
            ev.event_type AS last_event_type, ev.occurred_at AS last_event_at, ev.details AS last_event_details, ev.actor AS last_event_actor,

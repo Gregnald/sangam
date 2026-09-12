@@ -157,15 +157,9 @@ export function ControllerDashboard() {
                 {busyPlan === "weekly" ? "Solving…" : "Generate Next Weekly Plan"}
               </button>
             </div>
-            <p className="text-[11px] text-ops-muted -mt-4">
-              {monthsAhead === 0
-                ? "Current month: past days and any week that already has its own approved weekly plan are locked history — this only (re-)solves what's left, using every request currently in the backlog."
-                : "Next month and the month after solve fresh, from day one, with nothing locked yet."}
-            </p>
-
             <div className="border border-ops-border p-3 space-y-2">
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-[11px] text-ops-muted">Bulk (uses the month selector above):</span>
+                <span className="text-[11px] text-ops-muted">All zones:</span>
                 <button disabled={bulkBusy !== null} onClick={handleGenerateApproveAllMonthly} className="px-3 py-1.5 bg-ops-accent disabled:opacity-50 text-white text-xs">
                   {bulkBusy === "monthly" ? "Solving every zone…" : "Generate & Approve ALL Zones (Monthly)"}
                 </button>
@@ -199,11 +193,6 @@ export function ControllerDashboard() {
                       ))}
                     </tbody>
                   </table>
-                  <p className="text-[10px] text-ops-muted mt-2">
-                    0 assignments with 0 zero-score-pending usually means the remaining backlog for that zone genuinely needs a longer window than any
-                    available on its corridors — not an error. A nonzero "zero-score pending" count means a request scored exactly 0 by the priority
-                    model is still sitting unscheduled; check whether it actually fits before assuming it's fine.
-                  </p>
                 </div>
               )}
             </div>
@@ -240,8 +229,7 @@ export function ControllerDashboard() {
 
         {tab === "Compatibility" && (
           <div>
-            <h2 className="text-sm font-semibold text-ops-text mb-1">Block-Specific Compatibility</h2>
-            <p className="text-xs text-ops-muted mb-3">Pick a corridor, day, and block to see or change which departments may share it.</p>
+            <h2 className="text-sm font-semibold text-ops-text mb-3">Compatibility</h2>
             <BlockCompatibilityEditor zone={selectedZone} />
           </div>
         )}

@@ -53,6 +53,7 @@ export const EVENT_LABEL: Record<string, string> = {
   ingested: "Ingested from backlog upload",
   scheduled: "Scheduled",
   plan_scheduled: "Placed by approved plan",
+  auto_rescheduled: "Rescheduled (was overdue)",
   reschedule_offered: "Alternate window offered",
   reschedule_accepted: "Offer accepted by department",
   reschedule_rejected: "Offer rejected by department",
@@ -64,6 +65,11 @@ export const EVENT_LABEL: Record<string, string> = {
   completed: "Completed",
   cleared: "Cleared",
 };
+
+/** An overdue request the clock placed into the upcoming week, still holding that block. */
+export function isRescheduled(r: { rescheduledAt: string | null; workflowStatus: string }): boolean {
+  return Boolean(r.rescheduledAt) && r.workflowStatus === "scheduled";
+}
 
 /**
  * What sharing a possession means for this request. A "joint block" is the

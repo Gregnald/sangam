@@ -97,6 +97,7 @@ function assignmentTitle(a: ScheduleAssignment, isProposed: boolean, partners: S
     `Asset: ${a.assetId ?? "—"} · source: ${a.sourceSystem ? SOURCE_LABEL[a.sourceSystem] ?? a.sourceSystem : "—"}`,
     `Requested by: ${a.requestedBy ?? "—"}${a.planPeriodLabel ? ` · plan ${a.planPeriodLabel}` : ""}${isProposed ? " · PROPOSED (not yet approved)" : " · approved"}`,
   ];
+  if (a.rescheduledAt) lines.push("RESCHEDULED — was overdue; placed here automatically");
   if (partners.length > 0) {
     const otherDepts = [...new Set(partners.map((p) => p.department))].filter((d) => d !== a.department);
     const head = otherDepts.length > 0
@@ -328,7 +329,7 @@ export function CorridorGantt({
       </div>
       {backlogNoTime.length > 0 && (
         <div className="px-3 py-2 border-t border-ops-border">
-          <p className="text-[11px] text-ops-muted mb-1">Also in this corridor's backlog (no specific time requested):</p>
+          <p className="text-[11px] text-ops-muted mb-1">Unplaced backlog on this corridor:</p>
           <div className="flex flex-wrap gap-1.5">
             {backlogNoTime.map((p) => (
               <span key={p.defectId} className="text-[11px] px-1.5 py-0.5 bg-amber-400/20 text-amber-300">

@@ -13,12 +13,15 @@ what the passage of time implies:
   the same way (the block it wanted to displace has run).
 
 "Overdue" (a pending request past its due date) is not a status change —
-it stays pending and is reported as a flag by the requests API.
+it stays pending and is reported as a flag by the requests API. Once per
+operational day, though, every overdue request is offered to the upcoming
+week's live plan (`workflow/engine.py::reschedule_overdue`) and placed
+wherever it fits.
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import text
 
@@ -27,6 +30,10 @@ from workflow.events import log_events
 
 logger = logging.getLogger("sangam.workflow.clock")
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# Operational day the overdue sweep last ran on — it's a once-a-day job, the
+# clock ticks every minute.
+_overdue_swept_on: date | None = None
 
 
 def sync_with_clock(now: datetime | None = None) -> dict:
@@ -78,7 +85,7 @@ def sync_with_clock(now: datetime | None = None) -> dict:
             conn.execute(
                 text(
                     """
-                    UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, updated_at = now()
+                    UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now()
                     WHERE defect_id = :id AND workflow_status = 'awaiting_dept_response'
                     """
                 ),
@@ -114,7 +121,7 @@ def sync_with_clock(now: datetime | None = None) -> dict:
             conn.execute(
                 text(
                     """
-                    UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, updated_at = now()
+                    UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now()
                     WHERE defect_id = :id AND workflow_status = 'awaiting_controller'
                     """
                 ),
@@ -135,4 +142,15 @@ def sync_with_clock(now: datetime | None = None) -> dict:
     result = {"completed": completed, "lapsed_offers": lapsed_offers, "lapsed_bumps": lapsed_bumps}
     if any(result.values()):
         logger.info("clock sync: %s", result)
+
+    global _overdue_swept_on
+    today = now.astimezone(IST).date()
+    if _overdue_swept_on != today:
+        from workflow.engine import reschedule_overdue
+
+        try:
+            result["overdue_rescheduled"] = reschedule_overdue(today)["rescheduled"]
+            _overdue_swept_on = today
+        except Exception:  # noqa: BLE001 - the sweep must never break the clock
+            logger.exception("overdue reschedule sweep failed; will retry next tick")
     return result

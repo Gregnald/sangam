@@ -10,6 +10,12 @@ import type { Corridor } from "../types/api";
  *
  * `zone` is the initial zone. With `lockZone` the zone can't be changed —
  * used where the context already fixes it (a plan is solved for one zone).
+ *
+ * `blockCounts` (corridor id → number of blocks) appends "[N blocks]" to a
+ * corridor's option, tints it and lists it first, so a plan's corridors with
+ * work on them stand out from the hundreds with none. A native <option> can
+ * only be coloured as a whole, so the tint covers the line, not just the
+ * bracket.
  */
 export function CorridorPicker({
   zone,
@@ -17,6 +23,7 @@ export function CorridorPicker({
   onChange,
   lockZone = false,
   onZoneChange,
+  blockCounts,
   className = "",
 }: {
   zone: string | null;
@@ -24,6 +31,7 @@ export function CorridorPicker({
   onChange: (id: string | null) => void;
   lockZone?: boolean;
   onZoneChange?: (zone: string | null) => void;
+  blockCounts?: Record<string, number>;
   className?: string;
 }) {
   const zones = useAppStore((s) => s.zones);
@@ -59,6 +67,13 @@ export function CorridorPicker({
     onZoneChange?.(z);
   }
 
+  // Corridors that have blocks first (busiest-with-blocks first, then the
+  // traffic order the API already returns), so they aren't buried under the
+  // hundreds without any.
+  const listed = blockCounts
+    ? [...corridors].sort((a, b) => Number((blockCounts[b.corridorId] ?? 0) > 0) - Number((blockCounts[a.corridorId] ?? 0) > 0))
+    : corridors;
+
   return (
     <div className={`flex items-center gap-2 flex-wrap ${className}`}>
       <select
@@ -89,11 +104,15 @@ export function CorridorPicker({
         className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-1 flex-1 min-w-64 disabled:opacity-60"
       >
         <option value="">{!zoneState ? "Pick a zone first…" : query ? "Select a corridor…" : "Select a corridor (or type to search)…"}</option>
-        {corridors.map((c) => (
-          <option key={c.corridorId} value={c.corridorId}>
-            {c.corridorId} — {c.stationACode}→{c.stationBCode} ({c.direction.toUpperCase()}, {c.trainCount} trains/day)
-          </option>
-        ))}
+        {listed.map((c) => {
+          const blocks = blockCounts?.[c.corridorId] ?? 0;
+          return (
+            <option key={c.corridorId} value={c.corridorId} className={blocks > 0 ? "text-ops-accent font-semibold" : undefined}>
+              {c.corridorId} — {c.stationACode}→{c.stationBCode} ({c.direction.toUpperCase()}, {c.trainCount} trains/day)
+              {blocks > 0 && ` [${blocks} ${blocks === 1 ? "block" : "blocks"}]`}
+            </option>
+          );
+        })}
       </select>
     </div>
   );

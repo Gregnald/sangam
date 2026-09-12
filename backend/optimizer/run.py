@@ -423,7 +423,7 @@ def approve_plan(plan_id: str, approved_by: str) -> None:
                 text(
                     """
                     UPDATE core.defects d
-                    SET workflow_status = 'pending', defer_count = defer_count + 1, updated_at = now()
+                    SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now()
                     WHERE d.workflow_status = 'scheduled'
                       AND d.defect_id IN (SELECT defect_id FROM plan.block_assignments WHERE plan_id = ANY(:old_ids))
                       AND NOT EXISTS (

@@ -92,7 +92,7 @@ export function DepartmentDashboard() {
         {tab === "History" && (
           <div>
             <h2 className="text-sm font-semibold text-ops-text mb-3">History</h2>
-            <HistoryPanel scope="own" department={role ?? undefined} />
+            <HistoryPanel scope="own" />
           </div>
         )}
       </main>

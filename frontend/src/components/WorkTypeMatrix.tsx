@@ -61,22 +61,14 @@ export function WorkTypeMatrix({ readOnly = false }: { readOnly?: boolean }) {
   return (
     <div className="border border-ops-border">
       <div className="px-3 py-2 border-b border-ops-border flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-xs font-semibold text-ops-text">Which kinds of work may share one possession</p>
-          <p className="text-[11px] text-ops-muted mt-0.5">
-            One matrix decides it: each kind of work belongs to a department, so this is the whole rule. The optimizer and the live workflow put as many
-            jobs into a possession as are pairwise compatible here — there is no other cap.{!readOnly && " Click a cell to flip it."}
-          </p>
-        </div>
+        <p className="text-xs font-semibold text-ops-text">Work-type compatibility</p>
         <p className="text-[11px] text-right">
           <span className="text-ops-muted">Pairwise model: </span>
           {pm.active ? (
-            <span className="text-emerald-400">active — trained on {pm.rows} decisions{typeof pm.cv_auc === "number" ? `, AUC ${pm.cv_auc.toFixed(2)}` : ""}</span>
+            <span className="text-emerald-400">active · {pm.rows} decisions{typeof pm.cv_auc === "number" ? ` · AUC ${pm.cv_auc.toFixed(2)}` : ""}</span>
           ) : (
-            <span className="text-amber-400">inactive — {pm.reason ?? "learning from your edits"}</span>
+            <span className="text-amber-400">inactive · {pm.rows} / 30 decisions</span>
           )}
-          <br />
-          <span className="text-ops-muted">retrains on every matrix edit and per-block override</span>
         </p>
       </div>
       <div className="overflow-x-auto p-3">

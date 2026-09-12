@@ -34,18 +34,14 @@ export function LearnedCompatibility({ refreshKey }: { refreshKey?: number }) {
     <div className="space-y-3">
     <div className="border border-ops-border">
       <div className="px-3 py-2 border-b border-ops-border">
-        <p className="text-xs font-semibold text-ops-text">Department defaults — and what your per-block overrides have taught them</p>
-        <p className="text-[11px] text-ops-muted mt-0.5">
-          Department-level defaults, used only for a kind of work the matrix above doesn't know yet. They learn from your per-block overrides: after{" "}
-          {data.minEvidence} overrides on a pair, a consistent pattern (≥ {Math.round(data.flipThreshold * 100)}%) replaces the seeded default.
-        </p>
+        <p className="text-xs font-semibold text-ops-text">Department defaults</p>
       </div>
       <table className="w-full text-xs">
         <thead className="bg-ops-inset text-ops-muted uppercase text-[10px]">
           <tr>
             <th className="text-left p-2">Pair</th>
             <th className="text-left p-2">Seeded default</th>
-            <th className="text-left p-2">Your overrides</th>
+            <th className="text-left p-2">Overrides</th>
             <th className="text-left p-2">P(may share)</th>
             <th className="text-left p-2">Learned</th>
             <th className="text-left p-2">In effect</th>
@@ -66,7 +62,7 @@ export function LearnedCompatibility({ refreshKey }: { refreshKey?: number }) {
               <td className="p-2 text-ops-text mono">{p.posteriorMean.toFixed(2)}</td>
               <td className="p-2 text-ops-muted">
                 {p.learnedCompatible === null
-                  ? `not yet (${Math.max(0, data.minEvidence - p.overridesYes - p.overridesNo)} more overrides needed)`
+                  ? `— (${p.overridesYes + p.overridesNo} / ${data.minEvidence})`
                   : p.learnedCompatible
                     ? "may share"
                     : "separate blocks"}

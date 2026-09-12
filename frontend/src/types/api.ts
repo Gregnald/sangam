@@ -57,6 +57,8 @@ export interface DefectRequest {
   groupSize: number | null;
   isOverdue: boolean;
   executionState: ExecutionState | null;
+  /** Set when the clock sweep placed this overdue request into the upcoming week. */
+  rescheduledAt: string | null;
   lastEventType: string | null;
   lastEventAt: string | null;
   lastEventDetails: string | null;
@@ -204,6 +206,7 @@ export interface ScheduleAssignment {
   dueDate: string | null;
   priorityScore: number | null;
   speedRestrictionKmph: number | null;
+  rescheduledAt: string | null;
 }
 
 export interface ScheduleTraversal {
