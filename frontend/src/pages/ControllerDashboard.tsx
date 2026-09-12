@@ -3,8 +3,7 @@ import { TopBar } from "../components/TopBar";
 import { RequestsTable } from "../components/RequestsTable";
 import { ModificationList } from "../components/ModificationList";
 import { HistoryPanel } from "../components/HistoryPanel";
-import { MonthPlanCard } from "../components/MonthPlanCard";
-import { WeeklyPlanRow } from "../components/WeeklyPlanRow";
+import { PlanPeriodBrowser } from "../components/PlanPeriodBrowser";
 import { BlockCompatibilityEditor } from "../components/BlockCompatibilityEditor";
 import { IngestionPage } from "../components/IngestionPage";
 import { planTimeState } from "../lib/dates";
@@ -22,7 +21,7 @@ export function ControllerDashboard() {
   const [bulkResults, setBulkResults] = useState<{ kind: "weekly" | "monthly"; results: BulkPlanResult[] } | null>(null);
 
   const {
-    zones, selectedZone, requests, modifications, plans,
+    zones, selectedZone, requests, modifications, plans, resetEpoch,
     fetchZones, fetchRequests, fetchModifications, fetchPlans,
     decideModification, generateMonthlyPlan, generateWeeklyPlan,
     approvePlan, rejectPlan, generateAndApproveAllMonthly, generateAndApproveAllWeekly,
@@ -120,7 +119,7 @@ export function ControllerDashboard() {
     <div className="flex flex-col h-screen bg-ops-bg">
       <TopBar tabs={TABS} active={tab} onTabChange={setTab} />
 
-      <main className="flex-1 overflow-y-auto p-5">
+      <main key={resetEpoch} className="flex-1 overflow-y-auto p-5">
 
         {tab === "Backlog" && (
           <div>
@@ -209,27 +208,33 @@ export function ControllerDashboard() {
               )}
             </div>
 
-            <div>
-              <h3 className="text-xs font-semibold text-ops-text mb-2">Monthly Plans</h3>
-              <div className="space-y-2">
-                {monthlyPlans.length === 0 && <p className="text-xs text-ops-muted p-4 border border-ops-border">No monthly plans generated yet.</p>}
-                {monthlyPlans.map((p) => (
-                  <MonthPlanCard key={p.planId} plan={p} weeklyPlans={weeklyPlans} onApprove={handleApprove} onReject={handleReject} busy={busyPlan} />
-                ))}
-              </div>
-            </div>
+            <PlanPeriodBrowser
+              title="Monthly Plans"
+              horizon="monthly"
+              plans={monthlyPlans}
+              weeklyPlans={weeklyPlans}
+              zones={zones}
+              defaultZone={planZone}
+              consolidated={{ statuses: "approved,pending_approval" }}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              busy={busyPlan}
+              emptyText="No monthly plans generated yet."
+            />
 
-            <div>
-              <h3 className="text-xs font-semibold text-ops-text mb-2">Weekly Plans</h3>
-              <div className="space-y-2">
-                {visibleWeeklyPlans.length === 0 && <p className="text-xs text-ops-muted p-4 border border-ops-border">No weekly plans generated yet.</p>}
-                {visibleWeeklyPlans
-                  .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
-                  .map((p) => (
-                    <WeeklyPlanRow key={p.planId} onApprove={handleApprove} onReject={handleReject} busy={busyPlan} planId={p.planId} periodLabel={p.periodLabel} status={p.status} zone={p.zone} horizonStart={p.horizonStart} horizonEnd={p.horizonEnd} />
-                  ))}
-              </div>
-            </div>
+            <PlanPeriodBrowser
+              title="Weekly Plans"
+              horizon="weekly"
+              plans={visibleWeeklyPlans}
+              weeklyPlans={weeklyPlans}
+              zones={zones}
+              defaultZone={planZone}
+              consolidated={{ statuses: "approved,pending_approval" }}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              busy={busyPlan}
+              emptyText="No weekly plans generated yet."
+            />
           </div>
         )}
 

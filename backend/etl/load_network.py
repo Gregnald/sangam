@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 from app.config import REPO_ROOT
 from app.db import engine
+from etl.timetable import BUNDLED_EFFECTIVE_FROM, BUNDLED_LABEL, create_version
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("sangam.etl.load_network")
@@ -339,6 +340,10 @@ def load(limit_trains: int | None = None) -> dict:
         _write_corridors(conn, corridors)
         _write_traversals(conn, traversals)
         n_assets = build_assets(conn, corridors)
+        conn.execute(text("DELETE FROM core.timetable_versions"))
+        conn.execute(text("ALTER SEQUENCE core.timetable_versions_version_id_seq RESTART WITH 1"))
+        create_version(conn, source=BUNDLED_LABEL, label=BUNDLED_LABEL, effective_from=BUNDLED_EFFECTIVE_FROM, loaded_by=None,
+                       trains=len({t["train_number"] for t in traversals}), stop_rows=len(traversals))
 
     return {
         "stations": len(stations),

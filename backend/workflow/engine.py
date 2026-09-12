@@ -231,7 +231,7 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
             """
             SELECT window_id, corridor_id, window_start, window_end, max_concurrent_depts,
                    EXTRACT(EPOCH FROM (window_end - window_start)) / 3600.0 AS duration_hours
-            FROM core.corridor_block_windows
+            FROM core.active_block_windows
             WHERE corridor_id = :corridor AND window_start::date BETWEEN :ws AND :we
             ORDER BY window_start
             """
@@ -404,7 +404,7 @@ def _apply_modification_approval(conn, req, request_id: str, controller: str, re
             """
             SELECT window_id, max_concurrent_depts,
                    EXTRACT(EPOCH FROM (window_end - window_start)) / 3600.0 AS duration_hours
-            FROM core.corridor_block_windows
+            FROM core.active_block_windows
             WHERE corridor_id = :corridor AND window_start = :ws
             """
         ),

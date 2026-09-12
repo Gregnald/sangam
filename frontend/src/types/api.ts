@@ -212,6 +212,8 @@ export interface ScheduleTraversal {
   direction: string;
   departMin: number;
   arriveMin: number;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
 }
 
 export interface SchedulePendingRequest {
@@ -287,6 +289,33 @@ export interface PlanKpis {
   goodsPathsForecast: number;
   goodsPathsConflicting: number;
   departments: Record<string, PlanDepartmentKpi>;
+}
+
+export interface PlanKpiPlanRef {
+  planId: string;
+  zone: string | null;
+  status: string;
+}
+
+/** One period consolidated across zones (GET /plans/kpis). */
+export interface PeriodKpis extends Omit<PlanKpis, "planId"> {
+  planId: string | null;
+  zonesIncluded: string[];
+  zonesMissing: string[];
+  plans: PlanKpiPlanRef[];
+  statusCounts: Record<string, number>;
+}
+
+export interface ResetJobStatus {
+  jobId: string;
+  status: "running" | "done" | "failed";
+  stage: string | null;
+  progress: number;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+  log: string[];
+  stats: Record<string, unknown>;
 }
 
 export interface Asset {

@@ -185,7 +185,7 @@ export function CorridorGantt({
         </span>
         {data.traversals.length > 0 && (
           <span className="flex items-center gap-1">
-            <span className="w-0.5 h-2.5 inline-block" style={{ background: TRAIN_COLOR }} /> Timetabled train ({data.traversals.length}/day)
+            <span className="w-0.5 h-2.5 inline-block" style={{ background: TRAIN_COLOR }} /> Timetabled train
           </span>
         )}
         <span className="flex items-center gap-1">
@@ -213,10 +213,12 @@ export function CorridorGantt({
           const isHighlightDay = day === highlightDay;
           const isPast = day < todayKey;
           const hasCalendar = dayWindows.length > 0 || dayGoods.length > 0;
+          // Trains of the timetable version in force on this day.
+          const dayTrains = data.traversals.filter((t) => (!t.effectiveFrom || t.effectiveFrom <= day) && (!t.effectiveTo || day < t.effectiveTo));
           const covered: Array<[number, number]> = [
             ...dayWindows.map((w) => minutesOf(w.windowStart, w.windowEnd)),
             ...dayGoods.map((g) => minutesOf(g.bandStart, g.bandEnd)),
-            ...(hasCalendar ? data.traversals.map((t): [number, number] => [t.departMin, Math.min(t.arriveMin, 1440)]) : []),
+            ...(hasCalendar ? dayTrains.map((t): [number, number] => [t.departMin, Math.min(t.arriveMin, 1440)]) : []),
           ];
           const gaps = hasCalendar ? uncovered(covered) : [];
           return (
@@ -263,7 +265,7 @@ export function CorridorGantt({
                   />
                 ))}
                 {dayWindows.length > 0 &&
-                  data.traversals.map((t) => (
+                  dayTrains.map((t) => (
                     <div
                       key={`${t.trainNumber}-${t.departMin}`}
                       className="absolute top-0 h-full opacity-80"

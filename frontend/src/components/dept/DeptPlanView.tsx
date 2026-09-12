@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { MonthPlanCard } from "../MonthPlanCard";
 import { WeeklyPlanRow } from "../WeeklyPlanRow";
 import { useAppStore } from "../../store/appStore";
-import { planTimeState } from "../../lib/dates";
+import { planPeriodLabel, planTimeState } from "../../lib/dates";
 import type { BlockPlan } from "../../types/api";
 
 /**
@@ -42,7 +42,7 @@ export function DeptPlanView() {
 
   const label = (p: BlockPlan) => {
     const state = planTimeState(p.horizonStart, p.horizonEnd);
-    return `${p.periodLabel} · ${p.horizonStart} → ${p.horizonEnd}${state === "current" ? " (current)" : state === "past" ? " (past)" : ""}`;
+    return `${planPeriodLabel(p)}${state === "current" ? " (current)" : state === "past" ? " (past)" : ""}`;
   };
 
   return (
@@ -84,7 +84,7 @@ export function DeptPlanView() {
 
       <div>
         <h3 className="text-xs font-semibold text-ops-text mb-2">
-          Monthly plan {month ? `— ${month.periodLabel}` : ""}
+          Monthly plan {month ? `— ${planPeriodLabel(month)}` : ""}
           {month && planTimeState(month.horizonStart, month.horizonEnd) === "current" && <span className="ml-2 text-[10px] text-emerald-400 font-semibold">CURRENT MONTH</span>}
         </h3>
         {month ? (
@@ -96,7 +96,7 @@ export function DeptPlanView() {
 
       <div>
         <h3 className="text-xs font-semibold text-ops-text mb-2">
-          Weekly plan {week ? `— ${week.periodLabel}` : ""}
+          Weekly plan {week ? `— ${planPeriodLabel(week)}` : ""}
           {week && planTimeState(week.horizonStart, week.horizonEnd) === "current" && <span className="ml-2 text-[10px] text-emerald-400 font-semibold">CURRENT WEEK</span>}
         </h3>
         {week ? (

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { WeeklyPlanView } from "./WeeklyPlanView";
 import { PlanKpiPanel } from "./PlanKpiPanel";
-import { fmtDate, mondayOf } from "../lib/dates";
+import { fmtDate, mondayOf, planPeriodLabel } from "../lib/dates";
 import type { BlockPlan } from "../types/api";
 
 function weekState(start: Date, end: Date): "past" | "current" | "upcoming" {
@@ -63,7 +63,7 @@ export function MonthPlanCard({
         className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-ops-hover cursor-pointer"
       >
         <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold text-ops-text mono">{plan.periodLabel}</span>
+          <span className="text-xs font-semibold text-ops-text" title={plan.periodLabel}>{planPeriodLabel(plan)}</span>
           <span className={`text-[10px] uppercase font-semibold ${STATUS_COLOR[plan.status] ?? "text-ops-muted"}`}>{plan.status.replace(/_/g, " ")}</span>
           <span className="text-[10px] text-ops-muted">{plan.zone}</span>
           {activeLabel && <span className="text-[10px] font-semibold text-emerald-400 border border-emerald-400/40 px-1.5 py-0.5">CURRENTLY ACTIVE</span>}

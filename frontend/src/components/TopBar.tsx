@@ -3,11 +3,13 @@ import { Bell } from "lucide-react";
 import { useAuthStore } from "../store/authStore";
 import { useAppStore } from "../store/appStore";
 import { ThemeToggle } from "./ThemeToggle";
+import { ResetSystemDialog } from "./ResetSystemDialog";
 
 export function TopBar({ tabs, active, onTabChange }: { tabs: string[]; active: string; onTabChange: (t: string) => void }) {
   const { displayName, role, logout } = useAuthStore();
   const { notifications, fetchNotifications, markNotificationRead, markAllNotificationsRead } = useAppStore();
   const [open, setOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
 
   useEffect(() => {
     fetchNotifications();
@@ -73,10 +75,16 @@ export function TopBar({ tabs, active, onTabChange }: { tabs: string[]; active: 
           <p className="text-[10px] text-ops-muted">{role}</p>
         </div>
         <ThemeToggle />
+        {role === "CONTROLLER" && (
+          <button onClick={() => setResetOpen(true)} title="Wipe everything except login accounts and reload the network" className="text-xs text-red-400 hover:text-red-300 border border-red-400/40 px-2 py-1">
+            Reset system
+          </button>
+        )}
         <button onClick={logout} className="text-xs text-ops-muted hover:text-ops-text border border-ops-border px-2 py-1">
           Sign out
         </button>
       </div>
+      <ResetSystemDialog open={resetOpen} onClose={() => setResetOpen(false)} />
     </header>
   );
 }

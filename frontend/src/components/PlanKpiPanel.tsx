@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
-import type { PlanKpis } from "../types/api";
+import { api, ApiError, qs } from "../lib/api";
+import { periodLabelText, planPeriodLabel } from "../lib/dates";
+import type { PeriodKpis, PlanKpis } from "../types/api";
 
 const DEPT_COLOR: Record<string, string> = { ENGG: "#2563eb", SIGNAL: "#9333ea", TRD: "#ea580c" };
 
@@ -50,7 +51,55 @@ export function PlanKpiPanel({ planId, refreshKey }: { planId: string; refreshKe
 
   if (error) return <p className="text-[11px] text-red-400 px-3 py-2">Could not load KPIs: {error}</p>;
   if (!kpis) return <p className="text-[11px] text-ops-muted px-3 py-2">Computing availability KPIs…</p>;
+  return <KpiBody kpis={kpis} heading={`Asset availability · ${planPeriodLabel(kpis)} · ${kpis.zone} · ${kpis.days} days`} />;
+}
 
+/**
+ * One period across every zone: the backend picks one plan per zone (approved
+ * preferred), sums counts and hours and re-derives the percentages from the
+ * sums — so the availability figure is the railway's, not an average of zones.
+ */
+export function PeriodKpiPanel({ horizon, period, statuses, refreshKey }: { horizon: "monthly" | "weekly"; period: string; statuses: string; refreshKey?: string | number | null }) {
+  const [kpis, setKpis] = useState<PeriodKpis | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setKpis(null);
+    setError(null);
+    api
+      .get<PeriodKpis>(`/api/v1/plans/kpis${qs({ horizon, period, statuses })}`)
+      .then((k) => !cancelled && setKpis(k))
+      .catch((e) => !cancelled && setError(e instanceof ApiError && e.status === 404 ? "" : String(e)));
+    return () => {
+      cancelled = true;
+    };
+  }, [horizon, period, statuses, refreshKey]);
+
+  if (error === "") return <p className="text-[11px] text-ops-muted px-3 py-2 border border-ops-border">No plans for this period.</p>;
+  if (error) return <p className="text-[11px] text-red-400 px-3 py-2">Could not load KPIs: {error}</p>;
+  if (!kpis) return <p className="text-[11px] text-ops-muted px-3 py-2">Consolidating availability KPIs across zones…</p>;
+
+  const total = kpis.zonesIncluded.length + kpis.zonesMissing.length;
+  const statusLine = Object.entries(kpis.statusCounts)
+    .map(([st, n]) => `${n} ${st.replace(/_/g, " ")}`)
+    .join(" · ");
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between text-left text-[11px] text-ops-muted px-1 py-1 hover:text-ops-text">
+        <span>
+          All zones consolidated — {kpis.zonesIncluded.length} of {total} zones have a plan ({statusLine})
+          {kpis.zonesMissing.length > 0 && <span className="ml-2 text-ops-muted/80">· no plan: {kpis.zonesMissing.join(", ")}</span>}
+        </span>
+        <span>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && <KpiBody kpis={kpis} heading={`Asset availability · ${periodLabelText(horizon, period, kpis.horizonStart, kpis.horizonEnd)} · all zones (${kpis.zonesIncluded.length}) · ${kpis.days} days`} />}
+    </div>
+  );
+}
+
+export function KpiBody({ kpis, heading }: { kpis: PlanKpis | PeriodKpis; heading: string }) {
   const hoursSavedPct = kpis.jobHours > 0 ? (kpis.hoursSavedByJointBlocks / kpis.jobHours) * 100 : 0;
   const scheduledPct = kpis.openBacklog > 0 ? (kpis.jobsScheduled / kpis.openBacklog) * 100 : 0;
   const depts = Object.entries(kpis.departments).sort(([a], [b]) => a.localeCompare(b));
@@ -59,9 +108,7 @@ export function PlanKpiPanel({ planId, refreshKey }: { planId: string; refreshKe
   return (
     <div className="border border-ops-border bg-ops-inset">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-ops-border">
-        <p className="text-[10px] uppercase tracking-wide text-ops-muted">
-          Asset availability · {kpis.periodLabel} · {kpis.zone} · {kpis.days} days
-        </p>
+        <p className="text-[10px] uppercase tracking-wide text-ops-muted">{heading}</p>
         <p className="text-[10px] text-ops-muted">
           {kpis.weeklyPlansIncluded > 0 && (
             <span className="mr-3">
@@ -83,7 +130,7 @@ export function PlanKpiPanel({ planId, refreshKey }: { planId: string; refreshKe
           }
           tone="good"
         />
-        <Tile label="Availability (whole zone)" value={`${kpis.availabilityPct.toFixed(3)}%`} sub={`${kpis.possessionHours.toFixed(1)} h of ${kpis.corridorHoursAvailable.toLocaleString()} corridor-hours`} />
+        <Tile label="Availability (all corridors)" value={`${kpis.availabilityPct.toFixed(3)}%`} sub={`${kpis.possessionHours.toFixed(1)} h of ${kpis.corridorHoursAvailable.toLocaleString()} corridor-hours`} />
         <Tile
           label="Block events"
           value={String(kpis.blockEvents)}

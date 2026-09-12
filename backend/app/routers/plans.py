@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.db import get_db
-from app.schemas import BlockAssignment, BlockPlan, BulkPlanResult, ModelVersion, PlanHistoryEntry, PlanKpis, RejectPlanBody
-from optimizer.kpis import compute_plan_kpis
+from app.schemas import BlockAssignment, BlockPlan, BulkPlanResult, ModelVersion, PeriodKpis, PlanHistoryEntry, PlanKpis, RejectPlanBody
+from optimizer.kpis import compute_period_kpis, compute_plan_kpis
 from optimizer.run import (
     approve_plan,
     generate_and_approve_all,
@@ -38,7 +38,7 @@ def list_plans(
     horizon: str | None = Query(None),
     status: str | None = Query(None),
     zone: str | None = Query(None),
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, le=2000),
     db: Session = Depends(get_db),
 ):
     clauses, params = [], {"limit": limit}
@@ -57,6 +57,29 @@ def list_plans(
     q += " ORDER BY generated_at DESC LIMIT :limit"
     rows = db.execute(text(q), params).mappings().all()
     return [BlockPlan.model_validate(dict(r)) for r in rows]
+
+
+_KPI_STATUSES = {"approved", "pending_approval", "superseded", "rejected"}
+
+
+@router.get("/kpis", response_model=PeriodKpis)
+def get_period_kpis(
+    horizon: str = Query(..., pattern="^(monthly|weekly)$"),
+    period: str = Query(..., min_length=6, max_length=12),
+    statuses: str = Query("approved,pending_approval"),
+    zone: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """One period across zones: one plan per zone (statuses in preference
+    order), counts and hours summed, percentages re-derived from the sums."""
+    wanted = [s.strip() for s in statuses.split(",") if s.strip()]
+    bad = [s for s in wanted if s not in _KPI_STATUSES]
+    if bad or not wanted:
+        raise HTTPException(400, f"unknown status: {', '.join(bad) or '(none)'}")
+    try:
+        return PeriodKpis.model_validate(compute_period_kpis(db, horizon, period, wanted, zone))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.get("/{plan_id}/assignments", response_model=list[BlockAssignment])

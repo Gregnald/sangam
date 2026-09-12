@@ -178,6 +178,30 @@ With the default matrix, ENGG and SIGNAL bundle freely; TRD only shares a
 block once the controller marks that specific window compatible, because TRD
 work needs a confirmed OHE isolation.
 
+## Browsing plans
+
+The Plans tab (and History → Plans) is a **month / week → zone** picker:
+periods come from the plans that exist ("September 2026", "Week 38 · 14 Sep
+– 20 Sep 2026"), defaulting to the one covering today; the zone list marks
+zones with no plan for that period. **All zones (consolidated)** shows one
+KPI panel for the whole railway — `GET /api/v1/plans/kpis` picks one plan
+per zone (approved preferred over pending), sums counts and hours, and
+re-derives every percentage from the sums (never an average of zone
+percentages) — followed by each zone's plan card. A specific zone lists its
+plans newest first, so a pending regeneration sits above the approved plan
+it would replace, with Approve / Reject where applicable.
+
+## Reset system
+
+Controller only, in the top bar. Type `RESET` to confirm. `POST
+/api/v1/admin/reset` truncates every table except `core.users`, deletes the
+trained model artifacts, then reloads the network from `mapData/` (stations,
+corridors, bundled timetable as version 1), rebuilds the 35-day window
+calendar and re-seeds the compatibility matrices — the state of a fresh
+install, in a background job the dialog polls (`GET /api/v1/admin/reset/{id}`).
+The clock sync is paused for the duration. Login accounts and passwords are
+untouched.
+
 ## The clock
 
 The backend reconciles the backlog with the wall clock at startup and every
@@ -240,6 +264,21 @@ can be regenerated against the loaded network:
 python -m scripts.generate_sample_backlogs        # ENGG/SIGNAL/TRD backlog .xlsx — clustered on ~40 shared "hot" sections so joint blocks are possible; a third of rows pin a preferred window
 python -m scripts.generate_sample_goods_forecast  # COA goods-train forecast .xlsx for the corridors carrying backlog
 ```
+
+Train timetables are **versioned by effective date** (`core.timetable_versions`).
+The bundled `mapData/schedules.json` is version 1, in force from the start;
+each schedule workbook uploaded from the Ingest tab becomes a new version in
+force from the date you pick (default tomorrow). A version change never
+modifies anything that already exists: every plan — approved, pending or
+rejected — keeps exactly the assignments it was built with, and scheduled
+jobs stay scheduled, because a plan is a record of a decision made on
+specific data. What changes is what the *next* solve sees: candidate free
+windows for a day come from the version in force that day
+(`core.active_block_windows`), so the new timetable is used only when the
+controller generates or regenerates a plan, or a new request is placed.
+The Ingest tab lists every version and which is in force today. Untick
+"Load as a new version" to append a file's trains to the version in force
+today instead (existing corridors keep their calendar; new ones get one).
 
 Backlog workbooks take the optional columns `requested_window_start` /
 `requested_window_end` (`YYYY-MM-DD HH:MM`, IST); the goods forecast takes

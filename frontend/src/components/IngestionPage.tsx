@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { useAppStore } from "../store/appStore";
 
@@ -22,6 +22,21 @@ interface ScheduleResult {
   corridorsUpdated: number;
   traversalsAdded: number;
   windowsAdded: number;
+  replaced: boolean;
+  effectiveFrom: string | null;
+}
+
+interface TimetableVersion {
+  versionId: number;
+  source: string;
+  label: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  loadedAt: string;
+  loadedBy: string | null;
+  trains: number;
+  stopRows: number;
+  inForceToday: boolean;
 }
 
 interface GoodsForecastResult {
@@ -118,17 +133,33 @@ function ScheduleUploadCard() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ScheduleResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [replace, setReplace] = useState(true);
+  const [effectiveFrom, setEffectiveFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [versions, setVersions] = useState<TimetableVersion[]>([]);
+
+  const loadSource = () => api.get<TimetableVersion[]>("/api/v1/ingest/timetable-versions").then(setVersions).catch(() => setVersions([]));
+  useEffect(() => {
+    loadSource();
+  }, []);
 
   async function upload() {
     if (!file) return;
+    if (replace && !window.confirm(`Load this file as the timetable in force from ${effectiveFrom}? Existing plans and scheduled blocks are not modified; from that day on, new plans and new requests are scheduled against this timetable.`)) return;
     setBusy(true);
     setError(null);
     setResult(null);
     try {
       const form = new FormData();
       form.append("file", file);
+      form.append("replace", String(replace));
+      if (replace) form.append("effectiveFrom", effectiveFrom);
       const res = await api.postForm<ScheduleResult>("/api/v1/ingest/schedule", form);
       setResult(res);
+      await Promise.all([loadSource(), useAppStore.getState().fetchPlans(), useAppStore.getState().fetchRequests(), useAppStore.getState().fetchZones()]);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -138,10 +169,41 @@ function ScheduleUploadCard() {
 
   return (
     <div className="border border-ops-border p-3">
-      <h3 className="text-xs font-semibold text-ops-text mb-2">Railway Schedule</h3>
+      <h3 className="text-xs font-semibold text-ops-text mb-2">Railway Schedule (train timetable)</h3>
+      <div className="text-[11px] text-ops-muted mb-2">
+        <p className="mb-1">Timetables in force (each plan uses the one in force on its days):</p>
+        {versions.length === 0 ? (
+          <p className="text-amber-400">none loaded — run the pipeline</p>
+        ) : (
+          <ul className="space-y-0.5">
+            {versions.map((v) => (
+              <li key={v.versionId} className={v.inForceToday ? "text-ops-text" : ""}>
+                <span className="mono">{v.label}</span>
+                {v.source === "upload" ? " (uploaded" : " (bundled default"}
+                {v.loadedBy ? ` by ${v.loadedBy}` : ""}) · {v.trains} trains ·{" "}
+                {v.effectiveFrom <= "1900-01-02" ? "from the start" : `from ${v.effectiveFrom}`}
+                {v.effectiveTo ? ` until ${v.effectiveTo}` : " onward"}
+                {v.inForceToday && <span className="ml-2 text-emerald-400 font-semibold">IN FORCE TODAY</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       <p className="text-[11px] text-ops-muted mb-2">
-        Columns: <span className="mono">train_number, train_name, station_code, arrival, departure, day</span> — one row per stop, in stop order.
+        Columns: <span className="mono">train_number, train_name, station_code, arrival, departure, day</span> — one row per stop, in stop order. Until a
+        file is uploaded the bundled <span className="mono">mapData/schedules.json</span> is used.
       </p>
+      <label className="flex items-center gap-2 text-[11px] text-ops-muted mb-1 cursor-pointer">
+        <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
+        Load as a new timetable version (uncheck to append its trains to the current one)
+      </label>
+      {replace && (
+        <label className="flex items-center gap-2 text-[11px] text-ops-muted mb-2">
+          In force from
+          <input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} className="text-xs bg-ops-inset border border-ops-border text-ops-text px-2 py-0.5" />
+          <span>— existing plans are never modified; the next generate / regenerate uses it for days it covers</span>
+        </label>
+      )}
       <div className="flex items-center gap-2">
         <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-[11px] text-ops-muted flex-1" />
         <button disabled={!file || busy} onClick={upload} className="px-3 py-1.5 bg-ops-accent disabled:opacity-40 text-white text-xs">
@@ -152,8 +214,14 @@ function ScheduleUploadCard() {
       {result && (
         <div className="text-[11px] text-ops-muted mt-2 space-y-1">
           <p>
+            {result.replaced ? `New timetable version in force from ${result.effectiveFrom}. ` : "Appended. "}
             Read {result.rowsRead} rows, used {result.rowsUsed} · corridors added {result.corridorsAdded} · corridors updated {result.corridorsUpdated} ·
-            traversals added {result.traversalsAdded} · windows added {result.windowsAdded}
+            traversals {result.traversalsAdded} · free windows added {result.windowsAdded}
+            {result.replaced && (
+              <>
+                {" "}· <span className="text-emerald-400">existing plans and scheduled blocks are unchanged</span> — generate or regenerate a plan to schedule against the new timetable
+              </>
+            )}
           </p>
           {result.unknownStations.length > 0 && (
             <details>

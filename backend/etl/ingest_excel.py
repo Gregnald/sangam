@@ -154,19 +154,52 @@ def parse_schedule_workbook(file_bytes: bytes) -> list[dict]:
     return cleaned
 
 
-def ingest_schedule(rows: list[dict]) -> dict:
+def ingest_schedule(rows: list[dict], *, replace: bool = True, label: str = "upload", uploaded_by: str | None = None, effective_from: date | None = None) -> dict:
+    """Load a train timetable from a stop-list workbook.
+
+    `replace=True` (default): the workbook becomes a new **timetable version
+    in force from `effective_from`** (default: tomorrow). Nothing that already
+    exists is modified: every plan — approved, pending or rejected — keeps
+    exactly the assignments it was built with, and every scheduled job stays
+    scheduled. What changes is what *future* solves see: from the effective
+    date on, the candidate free windows come from this timetable (the old
+    version's windows for those days are kept for the plans that reference
+    them but are no longer offered). The new timetable is used only when the
+    controller generates or regenerates a plan, or a new request is placed.
+    Corridors the new timetable runs no train over stay in the network and
+    are fully free from that day.
+
+    `replace=False`: append the workbook's trains to the version in force
+    today (existing corridors keep their calendar; brand-new corridors get one).
+    """
+    from etl.timetable import create_version, version_for_day
+
     stations = load_stations()
     unknown_stations = sorted({r["station_code"] for r in rows if r["station_code"] not in stations})
     usable_rows = [r for r in rows if r["station_code"] in stations]
 
     corridors, traversals = build_corridors_and_traversals(stations, raw=usable_rows)
+    effective_from = effective_from or (date.today() + timedelta(days=1))
 
+    reset = {"effective_from": effective_from.isoformat()}
     with engine.begin() as conn:
         existing_ids = set(
             conn.execute(text("SELECT corridor_id FROM core.corridors WHERE corridor_id = ANY(:ids)"), {"ids": list(corridors.keys())}).scalars().all()
         )
         new_corridors = [c for cid, c in corridors.items() if cid not in existing_ids]
         touched_existing = [c for cid, c in corridors.items() if cid in existing_ids]
+
+        if replace:
+            version_id = create_version(
+                conn, source="upload", label=label, effective_from=effective_from, loaded_by=uploaded_by,
+                trains=len({t["train_number"] for t in traversals}), stop_rows=len(usable_rows),
+            )
+            # train_count is "trains/day under the timetable in force from the
+            # effective date" — it feeds the traffic weighting and the pickers.
+            if effective_from <= date.today() + timedelta(days=1):
+                conn.execute(text("UPDATE core.corridors SET train_count = 0"))
+        else:
+            version_id = version_for_day(conn, date.today()) or 1
 
         for chunk_start in range(0, len(new_corridors), 2000):
             chunk = new_corridors[chunk_start : chunk_start + 2000]
@@ -191,14 +224,16 @@ def ingest_schedule(rows: list[dict]) -> dict:
                 {"n": c["train_count"], "id": c["corridor_id"]},
             )
 
+        for t in traversals:
+            t["version_id"] = version_id
         for chunk_start in range(0, len(traversals), 5000):
             chunk = traversals[chunk_start : chunk_start + 5000]
             if chunk:
                 conn.execute(
                     text(
                         """
-                        INSERT INTO core.corridor_traversals (corridor_id, train_number, train_name, direction, depart_min, arrive_min)
-                        VALUES (:corridor_id, :train_number, :train_name, :direction, :depart_min, :arrive_min)
+                        INSERT INTO core.corridor_traversals (corridor_id, train_number, train_name, direction, depart_min, arrive_min, version_id)
+                        VALUES (:corridor_id, :train_number, :train_name, :direction, :depart_min, :arrive_min, :version_id)
                         """
                     ),
                     chunk,
@@ -226,13 +261,14 @@ def ingest_schedule(rows: list[dict]) -> dict:
                     },
                 )
 
-    # Only the brand-new corridors get a window calendar built here — an
-    # existing corridor that picked up extra traversals keeps its existing
-    # calendar untouched, since recomputing it could invalidate window_ids
-    # that already-approved plans reference. Its updated train_count still
-    # improves the live "is a train running here" status right away.
-    new_corridor_ids = [c["corridor_id"] for c in new_corridors]
-    n_windows = build_windows.build_for_corridors(new_corridor_ids, horizon_days=35)
+    if replace:
+        # Add this version's windows from its effective date on. Nothing is
+        # deleted: the old version's windows for those days stay (existing
+        # plans reference them) but are no longer offered to new solves — the
+        # core.active_block_windows view picks the version in force per day.
+        n_windows = build_windows.build_version(version_id, effective_from, horizon_days=35)
+    else:
+        n_windows = build_windows.build_for_corridors([c["corridor_id"] for c in new_corridors], horizon_days=35)
 
     result = {
         "rows_read": len(rows),
@@ -242,6 +278,8 @@ def ingest_schedule(rows: list[dict]) -> dict:
         "corridors_updated": len(touched_existing),
         "traversals_added": len(traversals),
         "windows_added": n_windows,
+        "replaced": replace,
+        **reset,
     }
     logger.info("ingested schedule: %s", result)
     return result
@@ -338,7 +376,7 @@ def ingest_goods_forecast(rows: list[dict], uploaded_by: str) -> dict:
             windows_affected = conn.execute(
                 text(
                     """
-                    SELECT count(*) FROM core.corridor_block_windows w
+                    SELECT count(*) FROM core.active_block_windows w
                     JOIN core.goods_train_forecasts g
                       ON g.corridor_id = w.corridor_id AND g.forecast_date = w.window_start::date
                     WHERE w.corridor_id = ANY(:cids) AND w.window_start::date = ANY(:days)

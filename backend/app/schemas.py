@@ -301,6 +301,9 @@ class ScheduleTraversal(BaseModel):
     direction: str
     depart_min: int
     arrive_min: int
+    # Dates the timetable version this passage belongs to is in force.
+    effective_from: date | None = None
+    effective_to: date | None = None
 
 
 class SchedulePendingRequest(BaseModel):
@@ -381,6 +384,23 @@ class PlanKpis(BaseModel):
     goods_paths_forecast: int
     goods_paths_conflicting: int
     departments: dict[str, PlanDepartmentKpi]
+
+
+class PlanKpiPlanRef(BaseModel):
+    model_config = CamelModel
+    plan_id: uuid.UUID
+    zone: str | None
+    status: str
+
+
+class PeriodKpis(PlanKpis):
+    """KPIs for one period consolidated across zones (see compute_period_kpis)."""
+
+    plan_id: uuid.UUID | None = None  # type: ignore[assignment]
+    zones_included: list[str]
+    zones_missing: list[str]
+    plans: list[PlanKpiPlanRef]
+    status_counts: dict[str, int]
 
 
 class ZoneSummary(BaseModel):

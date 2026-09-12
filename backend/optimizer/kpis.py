@@ -90,16 +90,20 @@ def compute_plan_kpis(conn, plan_id: str) -> dict:
     open_backlog = conn.execute(
         text(
             """
-            SELECT d.defect_id, d.severity_code, d.due_date, d.speed_restriction_kmph, d.department
+            SELECT d.defect_id, d.severity_code, d.due_date, d.speed_restriction_kmph, d.department, d.workflow_status
             FROM core.defects d
             JOIN core.corridors c ON c.corridor_id = d.corridor_id
-            WHERE c.zone = :z AND d.workflow_status NOT IN ('cleared', 'completed')
+            WHERE c.zone = :z AND d.workflow_status != 'cleared'
             """
         ),
         {"z": zone},
     ).mappings().all()
 
     scheduled_ids = {str(a["defect_id"]) for a in assignments if a["defect_id"]}
+    # The demand this plan was solving: everything open, plus jobs this plan
+    # placed that have since run to completion (otherwise "scheduled" can
+    # exceed "open" once the clock marks blocks done).
+    open_backlog = [d for d in open_backlog if d["workflow_status"] != "completed" or str(d["defect_id"]) in scheduled_ids]
     total_open = len(open_backlog)
     sev_a_total = sum(1 for d in open_backlog if d["severity_code"] == "A")
     sev_a_scheduled = sum(1 for d in open_backlog if d["severity_code"] == "A" and str(d["defect_id"]) in scheduled_ids)
@@ -153,17 +157,21 @@ def compute_plan_kpis(conn, plan_id: str) -> dict:
     corridor_ids = sorted({a["corridor_id"] for a in assignments if a["corridor_id"]})
     passenger_affected = 0
     if corridor_ids:
-        traversals = conn.execute(
-            text("SELECT corridor_id, depart_min, arrive_min FROM core.corridor_traversals WHERE corridor_id = ANY(:ids)"),
-            {"ids": corridor_ids},
-        ).mappings().all()
-        trav_by_corridor: dict[str, list[tuple[int, int]]] = {}
-        for t in traversals:
-            trav_by_corridor.setdefault(t["corridor_id"], []).append((t["depart_min"], t["arrive_min"]))
+        from etl.timetable import traversals_for_version, version_for_day
+
+        # Trains are checked against the timetable version in force on the
+        # block's day.
+        by_version: dict[int, dict[str, list[tuple[int, int]]]] = {}
         for a in assignments:
+            day = a["allocated_start"].astimezone(IST).date()
+            vid = version_for_day(conn, day)
+            if vid is None:
+                continue
+            if vid not in by_version:
+                by_version[vid] = traversals_for_version(conn, vid, corridor_ids)
             s_min = _minute_of_day(a["allocated_start"])
             e_min = s_min + int((a["allocated_end"] - a["allocated_start"]).total_seconds() // 60)
-            for dep, arr in trav_by_corridor.get(a["corridor_id"], []):
+            for dep, arr in by_version[vid].get(a["corridor_id"], []):
                 if dep < e_min and arr > s_min:
                     passenger_affected += 1
 
@@ -247,3 +255,87 @@ def compute_plan_kpis(conn, plan_id: str) -> dict:
         "goods_paths_conflicting": goods_conflicting,
         "departments": dept,
     }
+
+
+# Fields that add up across zones. Every percentage is re-derived from these
+# sums below — averaging percentages of zones of different sizes would be
+# wrong.
+_SUMMED = (
+    "corridors_in_zone", "weekly_plans_included", "affected_corridors", "corridor_hours_available",
+    "possession_hours", "job_hours", "hours_saved_by_joint_blocks", "block_events", "joint_blocks", "multi_dept_blocks",
+    "jobs_scheduled", "open_backlog", "severity_a_scheduled", "severity_a_total",
+    "speed_restrictions_scheduled", "speed_restrictions_total", "overdue_scheduled", "overdue_total",
+    "scheduled_on_time", "scheduled_late", "passenger_trains_affected", "goods_paths_forecast", "goods_paths_conflicting",
+)
+
+
+def compute_period_kpis(conn, horizon_type: str, period_label: str, statuses: list[str], zone: str | None = None) -> dict:
+    """KPIs for one period across zones — one representative plan per zone
+    (the first status in `statuses` that exists wins, newest first), then
+    counts and hours summed and every percentage re-derived from the sums.
+    """
+    from optimizer.run import list_zones
+
+    rows = conn.execute(
+        text(
+            """
+            SELECT DISTINCT ON (zone) plan_id, zone, status, horizon_start, horizon_end
+            FROM plan.block_plans
+            WHERE horizon_type = :h AND period_label = :p AND status = ANY(:statuses)
+              AND (CAST(:zone AS text) IS NULL OR zone = :zone)
+            ORDER BY zone, array_position(CAST(:statuses AS text[]), status), generated_at DESC
+            """
+        ),
+        {"h": horizon_type, "p": period_label, "statuses": statuses, "zone": zone},
+    ).mappings().all()
+    if not rows:
+        raise ValueError(f"no {horizon_type} plan for {period_label}")
+
+    parts = [compute_plan_kpis(conn, str(r["plan_id"])) for r in rows]
+    out: dict = {k: 0 for k in _SUMMED}
+    departments: dict[str, dict] = {}
+    affected_hours_available = 0.0
+    status_counts: dict[str, int] = {}
+    for r, p in zip(rows, parts):
+        for k in _SUMMED:
+            out[k] += p[k]
+        for dept, d in p["departments"].items():
+            entry = departments.setdefault(dept, {"jobs": 0, "hours": 0.0, "open": 0})
+            entry["jobs"] += d["jobs"]
+            entry["hours"] += d["hours"]
+            entry["open"] += d["open"]
+        affected_hours_available += p["affected_corridors"] * 24.0 * p["days"]
+        status_counts[r["status"]] = status_counts.get(r["status"], 0) + 1
+    for entry in departments.values():
+        entry["hours"] = round(entry["hours"], 1)
+    for k in ("corridor_hours_available", "possession_hours", "job_hours", "hours_saved_by_joint_blocks"):
+        out[k] = round(out[k], 1)
+
+    def pct(numer: float, denom: float) -> float:
+        return round(100.0 * (1.0 - numer / denom), 3) if denom else 100.0
+
+    h_start = min(r["horizon_start"] for r in rows)
+    h_end = max(r["horizon_end"] for r in rows)
+    included = sorted({r["zone"] for r in rows if r["zone"]})
+    all_zones = [z["zone"] for z in list_zones(conn, limit=100) if z["zone"]]
+    out.update(
+        {
+            "plan_id": None,
+            "zone": zone,
+            "horizon_type": horizon_type,
+            "period_label": period_label,
+            "horizon_start": h_start,
+            "horizon_end": h_end,
+            "days": (h_end - h_start).days + 1,
+            "availability_pct": pct(out["possession_hours"], out["corridor_hours_available"]),
+            "availability_pct_unbundled": pct(out["job_hours"], out["corridor_hours_available"]),
+            "availability_pct_affected": round(pct(out["possession_hours"], affected_hours_available), 2),
+            "availability_pct_affected_unbundled": round(pct(out["job_hours"], affected_hours_available), 2),
+            "departments": departments,
+            "zones_included": included,
+            "zones_missing": [z for z in all_zones if z not in included],
+            "plans": [{"plan_id": str(r["plan_id"]), "zone": r["zone"], "status": r["status"]} for r in rows],
+            "status_counts": status_counts,
+        }
+    )
+    return out

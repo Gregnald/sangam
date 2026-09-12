@@ -143,7 +143,7 @@ def _load_windows(conn, corridor_ids: list[str], horizon_start: date, horizon_en
         text(
             """
             SELECT window_id, corridor_id, window_start, window_end, max_concurrent_depts
-            FROM core.corridor_block_windows
+            FROM core.active_block_windows
             WHERE corridor_id = ANY(:corridor_ids)
               AND window_start::date >= :hs AND window_start::date <= :he
             """

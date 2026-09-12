@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { WeeklyPlanView } from "./WeeklyPlanView";
+import { weekLabel } from "../lib/dates";
 import { PlanKpiPanel } from "./PlanKpiPanel";
 
 export function WeeklyPlanRow({
@@ -36,7 +37,7 @@ export function WeeklyPlanRow({
         className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-ops-hover cursor-pointer"
       >
         <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold text-ops-text mono">{periodLabel}</span>
+          <span className="text-xs font-semibold text-ops-text" title={periodLabel}>{weekLabel(periodLabel, horizonStart, horizonEnd)}</span>
           <span className={`text-[10px] uppercase font-semibold ${status === "approved" ? "text-emerald-400" : status === "rejected" ? "text-red-400" : "text-amber-400"}`}>{status.replace(/_/g, " ")}</span>
           <span className="text-[10px] text-ops-muted">{zone}</span>
           {activeLabel && <span className="text-[10px] font-semibold text-emerald-400 border border-emerald-400/40 px-1.5 py-0.5">CURRENTLY ACTIVE</span>}

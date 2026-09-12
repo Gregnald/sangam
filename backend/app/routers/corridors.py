@@ -93,7 +93,7 @@ def corridor_schedule(
         text(
             """
             SELECT window_id, corridor_id, window_start, window_end, max_concurrent_depts
-            FROM core.corridor_block_windows
+            FROM core.active_block_windows
             WHERE corridor_id = :c AND window_start::date >= :s AND window_start::date <= :e
             ORDER BY window_start
             """
@@ -184,14 +184,23 @@ def corridor_schedule(
     # The timetabled trains through this corridor — the reason the free
     # windows have gaps in them. Same every day (the timetable repeats), so
     # one list serves every row of the Gantt.
+    # Each traversal carries the dates its timetable version is in force, so
+    # the Gantt can show the right trains on each day of a range that spans
+    # a timetable change.
     traversal_rows = db.execute(
         text(
             """
-            SELECT train_number, train_name, direction, depart_min, arrive_min
-            FROM core.corridor_traversals WHERE corridor_id = :c ORDER BY depart_min
+            SELECT t.train_number, t.train_name, t.direction, t.depart_min, t.arrive_min,
+                   v.effective_from,
+                   (SELECT min(n.effective_from) FROM core.timetable_versions n WHERE n.effective_from > v.effective_from) AS effective_to
+            FROM core.corridor_traversals t JOIN core.timetable_versions v ON v.version_id = t.version_id
+            WHERE t.corridor_id = :c
+              AND v.effective_from <= :e
+              AND NOT EXISTS (SELECT 1 FROM core.timetable_versions n WHERE n.effective_from > v.effective_from AND n.effective_from <= :s)
+            ORDER BY v.effective_from, t.depart_min
             """
         ),
-        {"c": corridor_id},
+        {"c": corridor_id, "s": start, "e": end},
     ).mappings().all()
 
     return CorridorSchedule(

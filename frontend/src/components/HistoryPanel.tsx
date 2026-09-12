@@ -3,9 +3,8 @@ import { api } from "../lib/api";
 import { CorridorPicker } from "./CorridorPicker";
 import { SnapshotGantt } from "./SnapshotGantt";
 import { ModificationList } from "./ModificationList";
-import { MonthPlanCard } from "./MonthPlanCard";
-import { WeeklyPlanRow } from "./WeeklyPlanRow";
-import { fmtDate, planTimeState } from "../lib/dates";
+import { PlanPeriodBrowser } from "./PlanPeriodBrowser";
+import { fmtDate, periodLabelText, planTimeState } from "../lib/dates";
 import { useAppStore } from "../store/appStore";
 import type { ModelVersion, ModificationRequest, PlanHistoryEntry } from "../types/api";
 import { BacklogHistory } from "./BacklogHistory";
@@ -82,7 +81,7 @@ function PeriodCard({ periodKey, entries, isCurrentlyActive }: { periodKey: stri
     <div className="border border-ops-border">
       <button onClick={() => setExpanded((e) => !e)} className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-ops-hover">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold text-ops-text mono">{periodLabel}</span>
+          <span className="text-xs font-semibold text-ops-text" title={periodLabel}>{periodLabelText(horizonType, periodLabel)}</span>
           <span className="text-[10px] text-ops-muted uppercase">{horizonType}</span>
           {isCurrentlyActive && <span className="text-[10px] font-semibold text-emerald-400 border border-emerald-400/40 px-1.5 py-0.5">CURRENTLY ACTIVE</span>}
         </div>
@@ -154,13 +153,14 @@ export function HistoryPanel({ scope, department }: { scope: "own" | "all"; depa
   const [sub, setSub] = useState<SubTab>("Plans");
   const [entries, setEntries] = useState<PlanHistoryEntry[]>([]);
   const [modifications, setModifications] = useState<ModificationRequest[]>([]);
-  const { plans, fetchPlans } = useAppStore();
+  const { plans, fetchPlans, zones, fetchZones, selectedZone } = useAppStore();
 
   useEffect(() => {
     api.get<PlanHistoryEntry[]>("/api/v1/plans/history").then(setEntries);
     api.get<ModificationRequest[]>("/api/v1/modifications").then(setModifications);
     fetchPlans();
-  }, [fetchPlans]);
+    if (zones.length === 0) fetchZones();
+  }, [fetchPlans, fetchZones, zones.length]);
 
   const decided = modifications.filter((m) => m.status === "approved" || m.status === "rejected" || m.status === "lapsed");
   const groups = Array.from(groupByPeriod(entries).entries()).sort((a, b) => b[0].localeCompare(a[0]));
@@ -218,21 +218,24 @@ export function HistoryPanel({ scope, department }: { scope: "own" | "all"; depa
         </div>
       </div>
 
-      <div>
-        <h3 className="text-xs font-semibold text-ops-text mb-2">Past, Rejected &amp; Superseded Plans</h3>
-        <div className="space-y-2">
-          {pastMonthly.length === 0 && pastWeekly.length === 0 && (
-            <p className="text-xs text-ops-muted p-4 border border-ops-border">Nothing here — every plan so far is either still live or awaiting a decision.</p>
-          )}
-          {pastMonthly.map((p) => (
-            <MonthPlanCard key={p.planId} plan={p} weeklyPlans={plans.filter((wp) => wp.horizonType === "weekly")} />
-          ))}
-          {pastWeekly.map((p) => (
-            <WeeklyPlanRow key={p.planId} planId={p.planId} periodLabel={p.periodLabel} status={p.status} zone={p.zone} horizonStart={p.horizonStart} horizonEnd={p.horizonEnd} />
-          ))}
-        </div>
-      </div>
-
+      <PlanPeriodBrowser
+        title="Past, rejected & superseded monthly plans"
+        horizon="monthly"
+        plans={pastMonthly}
+        weeklyPlans={plans.filter((wp) => wp.horizonType === "weekly")}
+        zones={zones}
+        defaultZone={selectedZone}
+        emptyText="Nothing here — every monthly plan so far is either still live or awaiting a decision."
+      />
+      <PlanPeriodBrowser
+        title="Past, rejected & superseded weekly plans"
+        horizon="weekly"
+        plans={pastWeekly}
+        weeklyPlans={plans.filter((wp) => wp.horizonType === "weekly")}
+        zones={zones}
+        defaultZone={selectedZone}
+        emptyText="Nothing here — every weekly plan so far is either still live or awaiting a decision."
+      />
       </div>
       )}
     </div>

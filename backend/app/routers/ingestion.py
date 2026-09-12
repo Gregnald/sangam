@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
+
+from sqlalchemy import text
 
 from app.auth import CurrentUser, require_role
 from etl import conform_defects, ingest_excel
@@ -43,6 +46,37 @@ class ScheduleIngestResult(BaseModel):
     corridors_updated: int
     traversals_added: int
     windows_added: int
+    replaced: bool = True
+    effective_from: str | None = None
+
+
+class TimetableVersion(BaseModel):
+    model_config = CamelModel
+    version_id: int
+    source: str
+    label: str
+    effective_from: date
+    effective_to: date | None = None
+    loaded_at: datetime
+    loaded_by: str | None = None
+    trains: int
+    stop_rows: int
+    in_force_today: bool = False
+
+
+@router.get("/timetable-versions", response_model=list[TimetableVersion])
+def timetable_versions():
+    """Every timetable loaded, with the dates each is in force."""
+    from etl.timetable import version_for_day, versions
+
+    with db_engine.connect() as conn:
+        vs = versions(conn)
+        current = version_for_day(conn, date.today())
+    out = []
+    for i, v in enumerate(vs):
+        nxt = vs[i + 1]["effective_from"] if i + 1 < len(vs) else None
+        out.append(TimetableVersion.model_validate({**v, "effective_to": nxt, "in_force_today": v["version_id"] == current}))
+    return out
 
 
 @router.post("/backlog", response_model=BacklogIngestResult)
@@ -128,8 +162,16 @@ async def ingest_goods_forecast_excel(
 @router.post("/schedule", response_model=ScheduleIngestResult)
 async def ingest_schedule_excel(
     file: UploadFile = File(...),
+    replace: bool = Form(True),
+    effective_from: date | None = Form(None, alias="effectiveFrom"),
     user: CurrentUser = Depends(require_role("CONTROLLER")),
 ):
+    """Upload a train timetable. By default it becomes a new version in force
+    from `effectiveFrom` (default tomorrow). No existing plan, assignment or
+    scheduled job is modified — the new timetable is what the *next*
+    generate / regenerate / request placement solves against for days it
+    covers. `replace=false` appends the file's trains to the version in force
+    today instead."""
     content = await file.read()
     try:
         rows = ingest_excel.parse_schedule_workbook(content)
@@ -138,5 +180,7 @@ async def ingest_schedule_excel(
     if not rows:
         raise HTTPException(400, "no usable rows found in the workbook")
 
-    result = ingest_excel.ingest_schedule(rows)
+    if replace and effective_from is not None and effective_from < date.today():
+        raise HTTPException(400, "a timetable can't take effect in the past — pick today or later")
+    result = ingest_excel.ingest_schedule(rows, replace=replace, label=file.filename or "upload.xlsx", uploaded_by=user.username, effective_from=effective_from)
     return ScheduleIngestResult.model_validate(result)

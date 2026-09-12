@@ -7,6 +7,7 @@ import type {
   DefectRequest,
   ModificationRequest,
   Notification,
+  ResetJobStatus,
   ZoneSummary,
 } from "../types/api";
 
@@ -19,6 +20,8 @@ interface AppState {
   plans: BlockPlan[];
   activeAssignments: BlockAssignment[];
   isLoading: boolean;
+  /** Bumped after a system reset so tab-local state remounts. */
+  resetEpoch: number;
 
   fetchZones: () => Promise<void>;
   setSelectedZone: (zone: string | null) => void;
@@ -27,6 +30,9 @@ interface AppState {
   fetchModifications: () => Promise<void>;
   fetchPlans: () => Promise<void>;
   fetchActiveWeeklyAssignments: () => Promise<void>;
+  refetchAll: () => Promise<void>;
+  startReset: (confirm: string) => Promise<{ jobId: string }>;
+  getResetStatus: (jobId: string) => Promise<ResetJobStatus>;
 
   submitRequest: (body: {
     corridorId: string;
@@ -62,6 +68,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   plans: [],
   activeAssignments: [],
   isLoading: false,
+  resetEpoch: 0,
 
 
   fetchZones: async () => {
@@ -93,9 +100,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   fetchPlans: async () => {
-    const plans = await api.get<BlockPlan[]>("/api/v1/plans");
+    // Every period of every zone — the plan pickers derive their month /
+    // week options from this list.
+    const plans = await api.get<BlockPlan[]>("/api/v1/plans?limit=1000");
     set({ plans });
   },
+
+  refetchAll: async () => {
+    set({ selectedZone: null, activeAssignments: [], plans: [], requests: [], modifications: [], notifications: [] });
+    await get().fetchZones();
+    await Promise.all([get().fetchRequests(), get().fetchModifications(), get().fetchPlans(), get().fetchNotifications(), get().fetchActiveWeeklyAssignments()]);
+    set({ resetEpoch: get().resetEpoch + 1 });
+  },
+
+  startReset: async (confirm) => api.post<{ jobId: string }>("/api/v1/admin/reset", { confirm }),
+  getResetStatus: async (jobId) => api.get<ResetJobStatus>(`/api/v1/admin/reset/${jobId}`),
 
   fetchActiveWeeklyAssignments: async () => {
     const zone = get().selectedZone;

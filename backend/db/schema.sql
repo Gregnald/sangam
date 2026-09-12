@@ -61,6 +61,23 @@ CREATE TABLE IF NOT EXISTS core.corridors (
 );
 CREATE INDEX IF NOT EXISTS idx_corridors_geom ON core.corridors USING GIST (geom);
 
+-- Train timetable versions. The bundled mapData/schedules.json is version 1
+-- (effective from the beginning of time); every schedule workbook uploaded
+-- from the Ingest tab is a new version effective from a date. The version in
+-- force on a day is the latest effective_from <= that day. Block windows are
+-- built per day from the version in force, so a plan approved under an older
+-- timetable stands for the days that timetable still covers.
+CREATE TABLE IF NOT EXISTS core.timetable_versions (
+    version_id      SERIAL PRIMARY KEY,
+    source          TEXT NOT NULL,           -- 'mapData/schedules.json' | 'upload'
+    label           TEXT NOT NULL,           -- file name shown in the UI
+    effective_from  DATE NOT NULL,
+    loaded_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    loaded_by       TEXT,
+    trains          INT NOT NULL DEFAULT 0,
+    stop_rows       INT NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS core.corridor_traversals (
     traversal_id    BIGSERIAL PRIMARY KEY,
     corridor_id     TEXT REFERENCES core.corridors(corridor_id),
@@ -68,9 +85,13 @@ CREATE TABLE IF NOT EXISTS core.corridor_traversals (
     train_name      TEXT,
     direction       TEXT NOT NULL,
     depart_min      INT NOT NULL,
-    arrive_min      INT NOT NULL
+    arrive_min      INT NOT NULL,
+    version_id      INT NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_traversals_corridor ON core.corridor_traversals (corridor_id);
+-- Idempotent upgrade for databases created before timetables were versioned.
+ALTER TABLE core.corridor_traversals ADD COLUMN IF NOT EXISTS version_id INT NOT NULL DEFAULT 1;
+CREATE INDEX IF NOT EXISTS idx_traversals_version ON core.corridor_traversals (version_id, corridor_id);
 
 CREATE TABLE IF NOT EXISTS core.assets (
     asset_id        TEXT PRIMARY KEY,
@@ -95,9 +116,30 @@ CREATE TABLE IF NOT EXISTS core.corridor_block_windows (
     corridor_id             TEXT REFERENCES core.corridors(corridor_id),
     window_start            TIMESTAMPTZ NOT NULL,
     window_end              TIMESTAMPTZ NOT NULL,
-    max_concurrent_depts    SMALLINT NOT NULL DEFAULT 1
+    max_concurrent_depts    SMALLINT NOT NULL DEFAULT 1,
+    -- The timetable version these gaps were computed from.
+    version_id              INT NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_windows_corridor_time ON core.corridor_block_windows (corridor_id, window_start);
+ALTER TABLE core.corridor_block_windows ADD COLUMN IF NOT EXISTS version_id INT NOT NULL DEFAULT 1;
+CREATE INDEX IF NOT EXISTS idx_windows_version ON core.corridor_block_windows (version_id);
+
+-- The windows *offered to new solves*: for each day, only those computed
+-- from the timetable version in force that day. Windows of a superseded
+-- version are kept in the table because approved plans reference them (a
+-- plan is a record of a decision on specific data and is never rewritten by
+-- a timetable upload) — they just stop being candidates. Anything that
+-- assembles a block reads this view; anything that displays an existing plan
+-- reads the table.
+CREATE OR REPLACE VIEW core.active_block_windows AS
+SELECT w.*
+FROM core.corridor_block_windows w
+WHERE w.version_id = (
+    SELECT v.version_id FROM core.timetable_versions v
+    WHERE v.effective_from <= (w.window_start AT TIME ZONE 'Asia/Kolkata')::date
+    ORDER BY v.effective_from DESC, v.version_id DESC
+    LIMIT 1
+);
 
 -- Per-block compatibility exceptions: a specific window on a specific day can
 -- override the department-pair default (core.compatibility_matrix) — e.g. a
