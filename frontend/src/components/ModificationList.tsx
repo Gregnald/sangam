@@ -26,6 +26,17 @@ function DiffLine({ m }: { m: ModificationRequest }) {
   return null;
 }
 
+const SEV_COLOR: Record<string, string> = {
+  A: "text-red-400",
+  B: "text-amber-400",
+  C: "text-emerald-400",
+};
+const SEV_LABEL: Record<string, string> = {
+  A: "A · Critical",
+  B: "B · Major",
+  C: "C · Routine",
+};
+
 export function ModificationList({
   items,
   mode,
@@ -45,14 +56,19 @@ export function ModificationList({
   const [status, setStatus] = useState("");
   const [dept, setDept] = useState("");
 
+  const [sevFilter, setSevFilter] = useState<"" | "A" | "B" | "C">("");
+  const [sortOrder, setSortOrder] = useState<"oldest" | "newest">("oldest");
+
   const depts = useMemo(() => [...new Set(items.map((m) => m.requestingDepartment))].sort(), [items]);
   const statuses = useMemo(() => [...new Set(items.map((m) => m.status))].sort(), [items]);
+  
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items.filter((m) => {
       if (type && m.requestType !== type) return false;
       if (status && m.status !== status) return false;
       if (dept && m.requestingDepartment !== dept) return false;
+      if (sevFilter && m.severityCode !== sevFilter) return false;
       if (q) {
         const hay = [m.proposedCorridorId, m.requestingDepartment, m.affectedDepartment, m.defectType?.replace(/_/g, " "), m.description, m.defectId, m.requestId, m.decidedBy, m.decisionReason]
           .filter(Boolean)
@@ -61,60 +77,75 @@ export function ModificationList({
         if (!hay.includes(q)) return false;
       }
       return true;
+    }).sort((a, b) => {
+      const diff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      return sortOrder === "oldest" ? diff : -diff;
     });
-  }, [items, query, type, status, dept]);
+  }, [items, query, type, status, dept, sevFilter, sortOrder]);
 
   if (items.length === 0) {
     return <p className="text-xs text-ops-muted p-4 border border-ops-border">Nothing here right now.</p>;
   }
-  const anyFilter = query || type || status || dept;
+  const anyFilter = query || type || status || dept || sevFilter;
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 flex-wrap text-xs">
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search corridor, type, description, id…" className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1 w-72" />
+    <div className="space-y-3">
+      {/* ── filter bar ── */}
+      <div className="flex items-center gap-3 flex-wrap text-xs border border-ops-border bg-ops-inset px-3 py-2">
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search..." className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1 w-64" />
+        
         <select value={type} onChange={(e) => setType(e.target.value as "" | ModificationType)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
           <option value="">All types</option>
-          <option value="reschedule">Reschedule offers</option>
-          <option value="preemption">Priority bumps</option>
+          <option value="reschedule">Reschedule</option>
+          <option value="preemption">Bump</option>
         </select>
+
         {statuses.length > 1 && (
           <select value={status} onChange={(e) => setStatus(e.target.value)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
             <option value="">All statuses</option>
             {statuses.map((s) => (
-              <option key={s} value={s}>
-                {s.replace(/_/g, " ")}
-              </option>
+              <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
             ))}
           </select>
         )}
+
         {depts.length > 1 && (
           <select value={dept} onChange={(e) => setDept(e.target.value)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
-            <option value="">All departments</option>
+            <option value="">All depts</option>
             {depts.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
+              <option key={d} value={d}>{d}</option>
             ))}
           </select>
         )}
+
+        <div className="w-px h-4 bg-ops-border" />
+
+        {/* Severity */}
+        <div className="flex items-center gap-1">
+          <span className="text-ops-muted uppercase text-[10px] tracking-wide mr-1">Sev</span>
+          <button onClick={() => setSevFilter("")} className={`px-2 py-0.5 text-[11px] border ${sevFilter === "" ? "bg-ops-accent border-ops-accent text-white" : "border-ops-border text-ops-muted hover:text-ops-text"}`}>All</button>
+          {(["A", "B", "C"] as const).map((s) => (
+            <button key={s} onClick={() => setSevFilter(sevFilter === s ? "" : s)} className={`px-2 py-0.5 text-[11px] border font-semibold ${sevFilter === s ? "bg-ops-accent border-ops-accent text-white" : `border-ops-border ${SEV_COLOR[s]} hover:opacity-80`}`}>{s}</button>
+          ))}
+        </div>
+
+        <div className="w-px h-4 bg-ops-border" />
+
+        {/* Sort */}
+        <div className="flex items-center gap-1">
+          <span className="text-ops-muted uppercase text-[10px] tracking-wide mr-1">Sort</span>
+          {(["oldest", "newest"] as const).map((s) => (
+            <button key={s} onClick={() => setSortOrder(s)} className={`px-2 py-0.5 text-[11px] border ${sortOrder === s ? "bg-ops-accent border-ops-accent text-white" : "border-ops-border text-ops-muted hover:text-ops-text"}`}>{s === "oldest" ? "Oldest" : "Newest"}</button>
+          ))}
+        </div>
+
         {anyFilter && (
-          <button
-            onClick={() => {
-              setQuery("");
-              setType("");
-              setStatus("");
-              setDept("");
-            }}
-            className="text-ops-accent underline"
-          >
-            clear
-          </button>
+          <button onClick={() => { setQuery(""); setType(""); setStatus(""); setDept(""); setSevFilter(""); }} className="text-ops-accent underline ml-2">clear</button>
         )}
-        <span className="text-ops-muted ml-auto">
-          {filtered.length} of {items.length}
-        </span>
+        
+        <span className="ml-auto text-ops-muted">{filtered.length} of {items.length}</span>
       </div>
+
       {filtered.length === 0 && <p className="text-xs text-ops-muted p-4 border border-ops-border">Nothing matches these filters.</p>}
       {filtered.map((m) => {
         const canExpand = Boolean(m.proposedCorridorId && m.proposedWindowStart);
@@ -124,7 +155,14 @@ export function ModificationList({
         return (
         <div key={m.requestId} className="border border-ops-border p-3">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-semibold text-ops-text">{TYPE_LABEL[m.requestType]}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-ops-text">{TYPE_LABEL[m.requestType]}</span>
+              {m.severityCode && (
+                <span className={`text-[10px] font-semibold uppercase ${SEV_COLOR[m.severityCode]}`}>
+                  Sev {SEV_LABEL[m.severityCode]}
+                </span>
+              )}
+            </div>
             <span className="text-[10px] text-ops-muted">{new Date(m.createdAt).toLocaleString(undefined, { timeZone: IST_TZ })}</span>
           </div>
           <p className="text-xs text-ops-muted mb-2">{m.description}</p>
