@@ -46,6 +46,12 @@ export function ControllerDashboard() {
     if (!planZone && zones.length > 0) setPlanZone(zones[0].zone);
   }, [zones, planZone]);
 
+  // A notification that names a request opens it in the Backlog.
+  const focusRequestId = useAppStore((s) => s.focusRequestId);
+  useEffect(() => {
+    if (focusRequestId) setTab("Backlog");
+  }, [focusRequestId]);
+
   const pendingControllerMods = modifications.filter((m) => m.status === "pending_controller" || m.status === "pending_dept");
   const isLiveOrPending = (p: (typeof plans)[number]) =>
     p.status === "pending_approval" || (p.status === "approved" && planTimeState(p.horizonStart, p.horizonEnd) !== "past");

@@ -42,11 +42,15 @@ def _retrain_and_rescore() -> None:
         logger.exception("pair-compatibility model retrain failed; leaving the existing model in place")
 
 
-def interim_priority(severity_code: str, speed_restriction_active: bool, defer_count: int) -> float:
+def interim_priority(severity_code: str, speed_restriction_active: bool, defer_count: int, traffic_suspended: bool = False) -> float:
     base = {"A": 85.0, "B": 55.0, "C": 30.0}.get(severity_code, 30.0)
     base += defer_count * 8
     if severity_code == "A" and speed_restriction_active:
         base = max(base, 90.0)
+    if traffic_suspended:
+        # Its block will cancel trains — every day it waits is a day of
+        # cancellations, so nothing outranks getting it done.
+        base = max(base, 98.0)
     return min(base, 100.0)
 
 
@@ -131,13 +135,15 @@ def _join_possession(conn, plan_id: str, window_id: str, group_id: str | None) -
     return new_group
 
 
-def _notify(conn, recipient_role: str, message: str, related_request_id: str | None = None) -> None:
+def _notify(conn, recipient_role: str, message: str, related_request_id: str | None = None, defect_id: str | None = None) -> None:
     conn.execute(
-        text(
-            "INSERT INTO plan.notifications (recipient_role, message, related_request_id) VALUES (:role, :msg, :req)"
-        ),
-        {"role": recipient_role, "msg": message, "req": related_request_id},
+        text("INSERT INTO plan.notifications (recipient_role, message, related_request_id, related_defect_id) VALUES (:role, :msg, :req, :defect)"),
+        {"role": recipient_role, "msg": message, "req": related_request_id, "defect": defect_id},
     )
+
+
+def _short(defect_id) -> str:
+    return f"#{str(defect_id)[:8].upper()}"
 
 
 def submit_request(
@@ -152,11 +158,12 @@ def submit_request(
     requested_window_start: datetime | None = None,
     requested_window_end: datetime | None = None,
     speed_restriction_kmph: int | None = None,
+    traffic_suspended: bool = False,
 ) -> dict:
     settings = get_settings()
     defect_id = str(uuid.uuid4())
     source_map = {"ENGG": "TMS", "SIGNAL": "SMMS", "TRD": "TDMS"}
-    score = interim_priority(severity_code, speed_restriction_kmph is not None, 0)
+    score = interim_priority(severity_code, speed_restriction_kmph is not None, 0, traffic_suspended)
 
     with engine.begin() as conn:
         conn.execute(
@@ -165,23 +172,23 @@ def submit_request(
                 INSERT INTO core.defects
                     (defect_id, source_system, asset_id, corridor_id, defect_type, severity_code, department,
                      detected_date, due_date, speed_restriction_kmph, estimated_block_hours,
-                     requested_window_start, requested_window_end, requested_by, workflow_status, priority_score)
+                     requested_window_start, requested_window_end, requested_by, workflow_status, priority_score, traffic_suspended)
                 VALUES
                     (:id, :src, :asset, :corridor, :dtype, :sev, :dept, CURRENT_DATE, :due, :speed, :hours,
-                     :ws, :we, :by, 'pending', :score)
+                     :ws, :we, :by, 'pending', :score, :closed)
                 """
             ),
             {
                 "id": defect_id, "src": source_map[department], "asset": asset_id, "corridor": corridor_id,
                 "dtype": defect_type, "sev": severity_code, "dept": department, "due": due_date, "speed": speed_restriction_kmph,
                 "hours": estimated_block_hours, "ws": requested_window_start, "we": requested_window_end, "by": requested_by,
-                "score": score,
+                "score": score, "closed": traffic_suspended,
             },
         )
 
         zone = conn.execute(text("SELECT zone FROM core.corridors WHERE corridor_id = :c"), {"c": corridor_id}).scalar()
-        log_event(conn, defect_id, "submitted", None, "pending", requested_by, f"{department} · {defect_type} · sev {severity_code} · {estimated_block_hours:.2f} h")
-        outcome = _place(conn, defect_id, department, corridor_id, zone, estimated_block_hours, score, requested_window_start, requested_window_end, settings.preemption_margin, defect_type=defect_type, due_date=due_date)
+        log_event(conn, defect_id, "submitted", None, "pending", requested_by, f"{department} · {defect_type} · sev {severity_code} · {estimated_block_hours:.2f} h" + (" · TRAINS CANCELLED DURING BLOCK" if traffic_suspended else ""))
+        outcome = _place(conn, defect_id, department, corridor_id, zone, estimated_block_hours, score, requested_window_start, requested_window_end, settings.preemption_margin, defect_type=defect_type, due_date=due_date, traffic_suspended=traffic_suspended)
 
     return {"defect_id": defect_id, "outcome": outcome}
 
@@ -199,7 +206,7 @@ def place_existing_defect(defect_id: str) -> str:
             text(
                 """
                 SELECT d.corridor_id, d.department, d.estimated_block_hours, d.priority_score,
-                       d.requested_window_start, d.requested_window_end, d.defect_type, d.due_date
+                       d.requested_window_start, d.requested_window_end, d.defect_type, d.due_date, d.traffic_suspended
                 FROM core.defects d
                 WHERE d.defect_id = :id AND d.workflow_status = 'pending'
                 """
@@ -214,7 +221,7 @@ def place_existing_defect(defect_id: str) -> str:
             conn, defect_id, row["department"], row["corridor_id"], zone,
             float(row["estimated_block_hours"]), float(row["priority_score"]),
             row["requested_window_start"], row["requested_window_end"], settings.preemption_margin,
-            defect_type=row["defect_type"], due_date=row["due_date"],
+            defect_type=row["defect_type"], due_date=row["due_date"], traffic_suspended=bool(row["traffic_suspended"]),
         )
 
 
@@ -236,12 +243,19 @@ def _candidate_windows(conn, corridor_id: str, start: date, end: date) -> list[d
     return clip_window_rows([dict(w) for w in rows], load_bands(conn, [corridor_id], start, end))
 
 
-def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | None, duration_hours: float, score: float, requested_start: datetime | None, requested_end: datetime | None, preemption_margin: float, defect_type: str | None = None, due_date: date | None = None) -> str:
+def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | None, duration_hours: float, score: float, requested_start: datetime | None, requested_end: datetime | None, preemption_margin: float, defect_type: str | None = None, due_date: date | None = None, traffic_suspended: bool = False) -> str:
     if not zone:
         return "pending"
 
     now = datetime.now(IST)
     today = now.date()
+    if traffic_suspended:
+        # Trains can't run through it anyway — the block doesn't wait for a
+        # timetable gap. It goes in at the asked time or the earliest time
+        # the corridor is free of other blocks, and the trains it overlaps
+        # are cancelled or postponed for it.
+        return "scheduled" if _place_urgent(conn, defect_id, zone, now) else "pending"
+
     if requested_start and requested_end and requested_start < now:
         # The time it asked for has passed — treat it as "any time", it
         # can't be honoured any more.
@@ -264,8 +278,9 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
         range_start, range_end = active_plan["horizon_start"], active_plan["horizon_end"]
 
     # Only windows that haven't started yet — a slot that's already gone
-    # can't be given to anyone.
-    windows = [w for w in _candidate_windows(conn, corridor_id, range_start, range_end) if w["window_start"] >= now]
+    # can't be given to anyone — and none the controller has already refused
+    # for this job.
+    windows = _not_refused([w for w in _candidate_windows(conn, corridor_id, range_start, range_end) if w["window_start"] >= now], _refused_windows(conn, defect_id))
 
     # A request pinned to a specific window only auto-schedules if it fits
     # *at that time* — anything else is a different deal than what the
@@ -329,6 +344,10 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
         )
         conn.execute(text("UPDATE core.defects SET workflow_status = 'scheduled', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
         log_event(conn, defect_id, "scheduled", "pending", "scheduled", "system", f"auto-placed {allocated_start:%Y-%m-%d %H:%M}–{allocated_end:%H:%M} on {corridor_id} ({active_plan['horizon_type']} plan {active_plan['period_label']})" + (" (joined an existing possession)" if group_id else ""))
+        work = (defect_type or "").replace("_", " ")
+        slot = f"{allocated_start:%a %d %b %H:%M}–{allocated_end:%H:%M}"
+        _notify(conn, department, f"Scheduled: {work} on {corridor_id} ({_short(defect_id)}) → {slot}" + (" in a shared possession" if group_id else "") + f" ({active_plan['horizon_type']} plan {active_plan['period_label']}).", defect_id=defect_id)
+        _notify(conn, "CONTROLLER", f"{department} {work} on {corridor_id} ({_short(defect_id)}) scheduled {slot}" + (" — joined an existing possession" if group_id else "") + ".", defect_id=defect_id)
         if created_plan:
             _snapshot(conn, str(active_plan["plan_id"]), "weekly", active_plan["period_label"], "proposed")
             _snapshot(conn, str(active_plan["plan_id"]), "weekly", active_plan["period_label"], "final")
@@ -372,7 +391,9 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
             },
         )
         conn.execute(text("UPDATE core.defects SET workflow_status = 'awaiting_controller', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
-        _notify(conn, "CONTROLLER", f"{department} submitted a high-priority request that requires bumping an existing scheduled block on {corridor_id}.", request_id)
+        target = f"{preemption_target['department']} block {preemption_target['allocated_start']:%a %d %b %H:%M}–{preemption_target['allocated_end']:%H:%M} on {corridor_id}"
+        _notify(conn, "CONTROLLER", f"Bump request: {department} {(defect_type or '').replace('_', ' ')} ({_short(defect_id)}, priority {score:.0f}) wants to displace the {target} (priority {float(preemption_target['priority_score'] or 0):.0f}). Approve or reject in Approvals.", request_id, defect_id)
+        _notify(conn, department, f"Your {(defect_type or '').replace('_', ' ')} on {corridor_id} ({_short(defect_id)}) outranks the {target}; a bump request is with the controller.", request_id, defect_id)
         log_event(conn, defect_id, "preemption_requested", "pending", "awaiting_controller", "system", f"asks to bump {preemption_target['department']} block {preemption_target['allocated_start']:%Y-%m-%d %H:%M} on {corridor_id}")
         return "preemption_pending"
 
@@ -420,6 +441,10 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
         )
         conn.execute(text("UPDATE core.defects SET workflow_status = 'awaiting_dept_response', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
         log_event(conn, defect_id, "reschedule_offered", "pending", "awaiting_dept_response", "system", f"offered {alt_window['window_start']:%Y-%m-%d %H:%M} on {corridor_id}")
+        alt = f"{alt_window['window_start']:%a %d %b %H:%M}–{(alt_window['window_start'] + timedelta(hours=duration_hours)):%H:%M}"
+        asked = f" instead of the {requested_start:%a %d %b %H:%M} you asked for" if requested_start else ""
+        _notify(conn, department, f"Alternate offered: {(defect_type or '').replace('_', ' ')} on {corridor_id} ({_short(defect_id)}) could run {alt}{asked}. Accept or reject in Actions Needed.", request_id, defect_id)
+        _notify(conn, "CONTROLLER", f"{department} {(defect_type or '').replace('_', ' ')} on {corridor_id} ({_short(defect_id)}) offered the alternate {alt}{asked}; awaiting the department.", request_id, defect_id)
         return "reschedule_offered"
 
     if refusals:
@@ -436,7 +461,7 @@ def respond_to_reschedule(request_id: str, accept: bool, responder: str) -> None
         if accept:
             conn.execute(text("UPDATE plan.modification_requests SET status = 'pending_controller' WHERE request_id = :id"), {"id": request_id})
             conn.execute(text("UPDATE core.defects SET workflow_status = 'awaiting_controller', updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
-            _notify(conn, "CONTROLLER", f"{req['requesting_department']} accepted a rescheduled window on {req['proposed_corridor_id']}. Modify the plan?", request_id)
+            _notify(conn, "CONTROLLER", f"{req['requesting_department']} accepted the alternate {req['proposed_window_start']:%a %d %b %H:%M}–{req['proposed_window_end']:%H:%M} on {req['proposed_corridor_id']} ({_short(req['defect_id'])}). Approve it in Approvals to change the plan.", request_id, str(req["defect_id"]))
             log_event(conn, req["defect_id"], "reschedule_accepted", "awaiting_dept_response", "awaiting_controller", responder, f"accepted {req['proposed_window_start']:%Y-%m-%d %H:%M}; awaiting controller")
         else:
             conn.execute(
@@ -466,7 +491,7 @@ def _apply_modification_approval(conn, req, request_id: str, controller: str, re
             text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now() WHERE defect_id = :id"),
             {"id": req["affected_defect_id"]},
         )
-        _notify(conn, req["affected_department"], f"Your scheduled block on {req['proposed_corridor_id']} was bumped by a higher-priority {req['requesting_department']} request. It has returned to the backlog.", request_id)
+        _notify(conn, req["affected_department"], f"Bumped: your block {req['proposed_window_start']:%a %d %b %H:%M}–{req['proposed_window_end']:%H:%M} on {req['proposed_corridor_id']} ({_short(req['affected_defect_id'])}) was given to a higher-priority {req['requesting_department']} request. It is back in the backlog and will be re-placed.", request_id, str(req["affected_defect_id"]))
         log_event(conn, req["affected_defect_id"], "bumped", "scheduled", "pending", controller, f"displaced by a higher-priority {req['requesting_department']} request on {req['proposed_corridor_id']}; deferred")
 
     defect = conn.execute(text("SELECT estimated_block_hours FROM core.defects WHERE defect_id = :id"), {"id": req["defect_id"]}).mappings().first()
@@ -497,8 +522,50 @@ def _apply_modification_approval(conn, req, request_id: str, controller: str, re
         text("UPDATE plan.modification_requests SET status = 'approved', decided_at = now(), decided_by = :by, decision_reason = :reason WHERE request_id = :id"),
         {"id": request_id, "by": controller, "reason": reason},
     )
-    _notify(conn, req["requesting_department"], f"Controller approved your schedule change on {req['proposed_corridor_id']}.", request_id)
+    _notify(conn, req["requesting_department"], f"Approved: your {req['request_type'] == 'preemption' and 'bump' or 'reschedule'} on {req['proposed_corridor_id']} ({_short(req['defect_id'])}) — block {start:%a %d %b %H:%M}–{(start + timedelta(hours=float(defect['estimated_block_hours']))):%H:%M}." + (f" Note: {reason}" if reason else ""), request_id, str(req["defect_id"]))
     log_event(conn, req["defect_id"], "scheduled", "awaiting_controller", "scheduled", controller, f"controller approved {req['request_type']}: {start:%Y-%m-%d %H:%M} on {req['proposed_corridor_id']}" + (f" — {reason}" if reason else ""))
+
+
+def force_bump(defect_id: str, controller: str, reason: str | None = None) -> dict:
+    """Controller pushes a waiting request into the schedule now: any open
+    offer or bump for it is withdrawn, then it is placed with the priority
+    margin waived — a free on-time slot if one exists, otherwise it
+    displaces the lowest-priority scheduled block on its corridor, and that
+    bump is approved on the spot in the controller's name (the displaced
+    department is told). Returns the outcome."""
+    settings = get_settings()
+    with engine.begin() as conn:
+        r = conn.execute(
+            text(f"SELECT {_JOB_COLUMNS}, d.workflow_status FROM core.defects d JOIN core.corridors c ON c.corridor_id = d.corridor_id WHERE d.defect_id = :id"),
+            {"id": defect_id},
+        ).mappings().first()
+        if not r:
+            raise ValueError("request not found")
+        if r["workflow_status"] not in ("pending", "awaiting_dept_response", "awaiting_controller"):
+            raise ValueError("only a waiting request can be bumped in")
+        if r["priority_score"] is None:
+            raise ValueError("not scored yet")
+        conn.execute(
+            text("UPDATE plan.modification_requests SET status = 'rejected', decided_at = now(), decided_by = :by, decision_reason = :r WHERE defect_id = :id AND status IN ('pending_dept', 'pending_controller')"),
+            {"id": defect_id, "by": controller, "r": f"superseded: controller forced placement{f' — {reason}' if reason else ''}"},
+        )
+        conn.execute(text("UPDATE core.defects SET workflow_status = 'pending', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
+        log_event(conn, defect_id, "force_bump", r["workflow_status"], "pending", controller, "controller forced placement (priority margin waived)" + (f" — {reason}" if reason else ""))
+        end = r["requested_window_start"] + timedelta(hours=float(r["estimated_block_hours"])) if r["requested_window_start"] else None
+        outcome = _place(
+            conn, defect_id, r["department"], r["corridor_id"], r["zone"], float(r["estimated_block_hours"]), float(r["priority_score"]),
+            r["requested_window_start"], end, -1e9, defect_type=r["defect_type"], due_date=r["due_date"], traffic_suspended=bool(r["traffic_suspended"]),
+        )
+        pending_bump = None
+        if outcome == "preemption_pending":
+            pending_bump = conn.execute(
+                text("SELECT request_id FROM plan.modification_requests WHERE defect_id = :id AND request_type = 'preemption' AND status = 'pending_controller' ORDER BY created_at DESC LIMIT 1"),
+                {"id": defect_id},
+            ).scalar()
+    if pending_bump:
+        decide_modification(str(pending_bump), True, controller, reason or "forced by controller from the backlog")
+        outcome = "bumped"
+    return {"outcome": outcome}
 
 
 def decide_modification(request_id: str, approve: bool, controller: str, reason: str | None = None) -> None:
@@ -513,7 +580,7 @@ def decide_modification(request_id: str, approve: bool, controller: str, reason:
                 {"id": request_id, "by": controller, "reason": reason},
             )
             conn.execute(text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now() WHERE defect_id = :id"), {"id": req["defect_id"]})
-            _notify(conn, req["requesting_department"], f"Controller rejected your requested schedule change on {req['proposed_corridor_id'] or ''}: {reason or 'no reason given'}.", request_id)
+            _notify(conn, req["requesting_department"], f"Rejected: your {req['request_type'] == 'preemption' and 'bump' or 'reschedule'} on {req['proposed_corridor_id'] or ''} ({_short(req['defect_id'])}) — {reason or 'no reason given'}. The request is back in the backlog.", request_id, str(req["defect_id"]))
             log_event(conn, req["defect_id"], "modification_rejected", "awaiting_controller", "pending", controller, f"controller rejected {req['request_type']}: {reason or 'no reason given'}; deferred")
         else:
             _apply_modification_approval(conn, req, request_id, controller, reason)
@@ -534,7 +601,7 @@ DUE_SOON_DAYS = 14
 RESCUE_SOLVE_SECONDS = 30
 
 _JOB_COLUMNS = """d.defect_id, d.department, d.corridor_id, d.defect_type, d.estimated_block_hours, d.due_date, d.priority_score,
-                  d.requested_window_start, c.zone"""
+                  d.requested_window_start, d.traffic_suspended, c.zone"""
 
 
 def _live_plan_for_week(conn, zone: str, week_start: date, week_end: date) -> tuple[dict, date, date] | None:
@@ -598,7 +665,25 @@ def _mark_placed(conn, r, today: date, allocated_start: datetime, allocated_end:
         log_event(conn, str(r["defect_id"]), "scheduled", "pending", "scheduled", "system", f"auto-placed {when}{suffix}")
         verb = "Request"
     work = (r["defect_type"] or "").replace("_", " ")
-    _notify(conn, r["department"], f"{verb} on {r['corridor_id']} ({work}, due {r['due_date']}) was scheduled for {allocated_start:%a %d %b %H:%M}–{allocated_end:%H:%M}.")
+    slot = f"{allocated_start:%a %d %b %H:%M}–{allocated_end:%H:%M}"
+    _notify(conn, r["department"], f"{verb} scheduled: {work} on {r['corridor_id']} ({_short(r['defect_id'])}, due {r['due_date']}) → {slot}" + (" in a shared possession" if joined else "") + f" ({how}).", defect_id=str(r["defect_id"]))
+    _notify(conn, "CONTROLLER", f"{'Overdue ' if overdue else ''}{r['department']} {work} on {r['corridor_id']} ({_short(r['defect_id'])}) placed by the sweep → {slot} ({how}).", defect_id=str(r["defect_id"]))
+
+
+def _refused_windows(conn, defect_id) -> list[tuple[datetime, datetime]]:
+    """Slots the controller has already rejected or removed this job from —
+    automatic placement steers clear of them."""
+    return [
+        (r["allocated_start"], r["allocated_end"])
+        for r in conn.execute(
+            text("SELECT allocated_start, allocated_end FROM plan.block_decisions WHERE defect_id = :d AND decision = 'rejected'"),
+            {"d": defect_id},
+        ).mappings()
+    ]
+
+
+def _not_refused(windows: list[dict], refused: list[tuple[datetime, datetime]]) -> list[dict]:
+    return [w for w in windows if not any(w["window_start"] <= s and w["window_end"] >= e for s, e in refused)]
 
 
 def _fit_into_live_plan(conn, plan: dict, range_start: date, range_end: date, rows: list, today: date, week_label: str, not_before: datetime | None = None, on_time_only: bool = False) -> list:
@@ -615,6 +700,7 @@ def _fit_into_live_plan(conn, plan: dict, range_start: date, range_end: date, ro
             windows = [w for w in windows if w["window_start"] >= not_before]
         if on_time_only and r["due_date"] is not None:
             windows = [w for w in windows if w["window_start"].astimezone(IST).date() <= r["due_date"]]
+        windows = _not_refused(windows, _refused_windows(conn, r["defect_id"]))
         pair_compat = load_pair_compatibility(conn, [str(w["window_id"]) for w in windows])
         usage = {str(w["window_id"]): _window_usage(conn, plan["plan_id"], str(w["window_id"])) for w in windows}
         ranked = sorted(windows, key=lambda w: (0 if usage[str(w["window_id"])][0] else 1, w["window_start"]))
@@ -709,6 +795,58 @@ def _chase_slots(conn, zone: str, rows: list, today: date, now: datetime, first_
     return left
 
 
+def _place_urgent(conn, defect_id: str, zone: str, now: datetime) -> bool:
+    """Place a job whose fault is unsafe for traffic: over the timetable, at
+    the time it asked for or the earliest quarter-hour from now, pushed only
+    by other blocks already on the corridor. It joins the live plan of the
+    week it lands in (a system plan is opened if there is none). Trains it
+    overlaps are cancelled or postponed — the Gantt shows them greyed."""
+    r = conn.execute(
+        text(f"SELECT {_JOB_COLUMNS} FROM core.defects d JOIN core.corridors c ON c.corridor_id = d.corridor_id WHERE d.defect_id = :id"),
+        {"id": defect_id},
+    ).mappings().first()
+    if not r:
+        return False
+    duration = timedelta(hours=float(r["estimated_block_hours"]))
+    if r["requested_window_start"] and r["requested_window_start"] >= now:
+        start = r["requested_window_start"].astimezone(IST)
+    else:
+        start = now.replace(second=0, microsecond=0)
+        start += timedelta(minutes=(15 - start.minute % 15) % 15 or 15)
+    horizon = now + timedelta(days=7 * WEEKS_AHEAD)
+    # Slide past any live block already on the corridor.
+    for _ in range(200):
+        clash = conn.execute(
+            text(
+                """
+                SELECT max(a.allocated_end) FROM plan.block_assignments a JOIN plan.block_plans p ON p.plan_id = a.plan_id
+                WHERE p.status = 'approved' AND a.corridor_id = :c AND a.allocated_start < :e AND a.allocated_end > :s
+                """
+            ),
+            {"c": r["corridor_id"], "s": start, "e": start + duration},
+        ).scalar()
+        if clash is None:
+            break
+        start = clash.astimezone(IST)
+        if start > horizon:
+            return False
+    end = start + duration
+    ws, we, label = week_bounds(start.date())
+    plan, _rs, _re, created = _ensure_week_plan(conn, zone, ws, we, label)
+    _insert_assignment(conn, plan["plan_id"], None, r["corridor_id"], str(r["defect_id"]), r["department"], start, end, None)
+    conn.execute(text("UPDATE core.defects SET workflow_status = 'scheduled', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
+    where = f"{start:%Y-%m-%d %H:%M}–{end:%H:%M} on {r['corridor_id']} ({plan['horizon_type']} plan {plan['period_label']})"
+    log_event(conn, defect_id, "scheduled", "pending", "scheduled", "system", f"placed over the timetable {where} — section unsafe for trains; trains in this block are cancelled / postponed")
+    work = (r["defect_type"] or "").replace("_", " ")
+    _notify(conn, r["department"], f"Block for {work} on {r['corridor_id']} ({_short(defect_id)}) fixed for {start:%a %d %b %H:%M}–{end:%H:%M}; trains through the section in that time are cancelled / postponed.", defect_id=defect_id)
+    _notify(conn, "CONTROLLER", f"{r['department']} {work} on {r['corridor_id']} ({_short(defect_id)}) is unsafe for traffic — block placed {start:%a %d %b %H:%M}–{end:%H:%M} over the timetable; trains in it must be cancelled or postponed.", defect_id=defect_id)
+    if created:
+        _snapshot(conn, str(plan["plan_id"]), "weekly", label, "proposed")
+        _snapshot(conn, str(plan["plan_id"]), "weekly", label, "final")
+    logger.info("urgent block %s placed %s", defect_id, where)
+    return True
+
+
 def _place_ahead(conn, defect_id: str, zone: str, today: date, now: datetime) -> bool:
     """Place-on-arrival, looking past this week: the weeks up to the
     request's due date, live plan or a system plan, on-time windows only."""
@@ -752,6 +890,11 @@ def reschedule_overdue(today: date | None = None) -> dict:
         ).mappings().all()
         if not rows:
             return {"overdue": 0, "due_soon": 0, "rescheduled": 0, "scheduled": 0, "unplaced": 0}
+
+        urgent = [r for r in rows if r["traffic_suspended"]]
+        n_urgent = sum(1 for r in urgent if _place_urgent(conn, str(r["defect_id"]), r["zone"], now))
+        placed_urgent = {str(r["defect_id"]) for r in urgent}
+        rows = [r for r in rows if str(r["defect_id"]) not in placed_urgent]
 
         overdue = [r for r in rows if r["due_date"] < today]
         due_soon = [r for r in rows if r["due_date"] >= today and r["requested_window_start"] is None]
@@ -800,23 +943,28 @@ def reschedule_overdue(today: date | None = None) -> dict:
                 f"overdue (due {r['due_date']}): no window on {r['corridor_id']} can take {float(r['estimated_block_hours']):.2f} h within the next {WEEKS_AHEAD} weeks",
             )
 
-    result = {"overdue": len(overdue), "due_soon": len(due_soon), "rescheduled": n_rescheduled, "scheduled": n_scheduled, "unplaced": len(unplaced), "due_soon_unplaced": len(still_pending), "pinned": pinned_outcomes}
+    result = {"urgent": n_urgent, "overdue": len(overdue), "due_soon": len(due_soon), "rescheduled": n_rescheduled, "scheduled": n_scheduled, "unplaced": len(unplaced), "due_soon_unplaced": len(still_pending), "pinned": pinned_outcomes}
     logger.info("daily sweep: %s", result)
     return result
 
 
 def decide_block(assignment_id: str, approve: bool, controller: str, reason: str | None = None) -> dict:
-    """The controller's verdict on one block of a plan that is still awaiting
-    approval — from the Gantt, without approving or rejecting the whole plan.
+    """The controller's verdict on one block from the Gantt.
 
-    Accept: the block is kept and marked; approving the plan later publishes
-    it with the rest. Reject: the block is removed from the proposal, so the
-    request stays in the backlog for the next solve (its status doesn't
-    change — nothing was live). Either way the decision is recorded in
-    plan.block_decisions and treated as training signal: a label nudge for
-    the priority ranker, and — when the block shared a possession with other
-    departments — a compatibility decision about each such pair for the
-    pairwise model. Both retrain right away."""
+    On a plan awaiting approval — accept: the block is kept and marked;
+    approving the plan later publishes it with the rest. Reject: the block
+    is removed from the proposal; the request stays in the backlog.
+
+    On an approved (live) plan only removal is possible: the block is taken
+    out of the schedule, the job returns to the backlog as one more deferral
+    (so its priority rises), and its department is told.
+
+    Either way the decision is recorded in plan.block_decisions and treated
+    as training signal: a label nudge for the priority ranker, and — when the
+    block shared a possession with other departments — a compatibility
+    decision about each such pair for the pairwise model. Both retrain right
+    away. A refused slot is also remembered: automatic placement won't put
+    the same job back into the same window."""
     with engine.begin() as conn:
         a = conn.execute(
             text(
@@ -835,8 +983,13 @@ def decide_block(assignment_id: str, approve: bool, controller: str, reason: str
         ).mappings().first()
         if not a:
             raise ValueError("block not found")
-        if a["plan_status"] != "pending_approval":
-            raise ValueError("only a block of a plan awaiting approval can be decided on its own")
+        if a["plan_status"] not in ("pending_approval", "approved"):
+            raise ValueError("this plan is no longer live or awaiting approval")
+        live = a["plan_status"] == "approved"
+        if live and approve:
+            raise ValueError("a block in an approved plan is already in force; it can only be removed")
+        if live and a["allocated_end"] <= datetime.now(IST):
+            raise ValueError("this block has already run")
 
         decision = "accepted" if approve else "rejected"
         conn.execute(
@@ -882,7 +1035,7 @@ def decide_block(assignment_id: str, approve: bool, controller: str, reason: str
                 )
 
         where = f"{a['allocated_start']:%Y-%m-%d %H:%M}–{a['allocated_end']:%H:%M} on {a['corridor_id']}"
-        plan_ref = f"proposed {a['horizon_type']} plan {a['period_label']} ({a['zone']})"
+        plan_ref = f"{'approved' if live else 'proposed'} {a['horizon_type']} plan {a['period_label']} ({a['zone']})"
         if approve:
             conn.execute(
                 text("UPDATE plan.block_assignments SET decision = 'accepted', decided_by = :by, decided_at = now() WHERE assignment_id = :id"),
@@ -898,7 +1051,22 @@ def decide_block(assignment_id: str, approve: bool, controller: str, reason: str
                     text("UPDATE plan.block_assignments SET joint_block_group_id = NULL WHERE assignment_id = :id"),
                     {"id": partners[0]["assignment_id"]},
                 )
-            if a["defect_id"]:
+            if a["defect_id"] and live:
+                # The job loses its slot: back to the backlog, one more
+                # deferral, and its department hears why.
+                still_live = conn.execute(
+                    text("SELECT 1 FROM plan.block_assignments b JOIN plan.block_plans p ON p.plan_id = b.plan_id WHERE b.defect_id = :d AND p.status = 'approved' LIMIT 1"),
+                    {"d": a["defect_id"]},
+                ).scalar()
+                if not still_live:
+                    conn.execute(
+                        text("UPDATE core.defects SET workflow_status = 'pending', defer_count = defer_count + 1, rescheduled_at = NULL, updated_at = now() WHERE defect_id = :id AND workflow_status = 'scheduled'"),
+                        {"id": a["defect_id"]},
+                    )
+                log_event(conn, str(a["defect_id"]), "block_removed", "scheduled", "pending", controller, f"controller removed the block {where} from the {plan_ref}; back in the backlog" + (f" — {reason}" if reason else ""))
+                work = (a["defect_type"] or "").replace("_", " ")
+                _notify(conn, a["department"], f"Removed: controller took your block for {work} on {a['corridor_id']} ({_short(a['defect_id'])}) {a['allocated_start']:%a %d %b %H:%M}–{a['allocated_end']:%H:%M} out of the plan. It is back in the backlog and will be re-placed." + (f" Reason: {reason}" if reason else ""), defect_id=str(a["defect_id"]))
+            elif a["defect_id"]:
                 log_event(conn, str(a["defect_id"]), "block_rejected", None, None, controller, f"controller rejected the block {where} in {plan_ref}; stays in the backlog for the next solve" + (f" — {reason}" if reason else ""))
 
     # The smallest controller call is still a controller call — fold it in.

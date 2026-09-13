@@ -1,8 +1,9 @@
 import { IST_TZ } from "../../lib/dates";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CorridorGantt } from "../CorridorGantt";
-import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, EVENT_LABEL, blockDay, displayStatus, isRescheduled, possessionLabel, shortId, type DisplayStatus } from "../../lib/requestStatus";
+import { DISPLAY_COLOR, DISPLAY_LABEL, DISPLAY_ORDER, EVENT_LABEL, blockDay, displayStatus, isRescheduled, possessionLabel, shortId, waitingFor, type DisplayStatus } from "../../lib/requestStatus";
 import type { DefectRequest } from "../../types/api";
+import { useAppStore } from "../../store/appStore";
 
 const SEV_COLOR: Record<string, string> = { A: "text-red-400", B: "text-amber-400", C: "text-emerald-400" };
 
@@ -33,8 +34,11 @@ function fmtDT(iso: string | null): string {
   return iso ? new Date(iso).toLocaleString(undefined, { timeZone: IST_TZ, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 }
 
-function BlockCard({ r }: { r: DefectRequest }) {
-  const [open, setOpen] = useState(false);
+function BlockCard({ r, forceOpen }: { r: DefectRequest; forceOpen?: boolean }) {
+  const [open, setOpen] = useState(Boolean(forceOpen));
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
   const ds = displayStatus(r);
   const day = blockDay(r);
   const hasBlock = Boolean(r.allocatedStart && r.allocatedEnd);
@@ -43,12 +47,13 @@ function BlockCard({ r }: { r: DefectRequest }) {
   const possession = possessionLabel(r);
 
   return (
-    <div className={`border ${open ? "border-ops-accent" : "border-ops-border"}`}>
+    <div id={`request-${r.defectId}`} className={`border ${open ? "border-ops-accent" : "border-ops-border"}`}>
       <button onClick={() => setOpen((o) => !o)} className="w-full text-left px-3 py-2.5 hover:bg-ops-hover">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
             <span className={`text-[11px] uppercase font-semibold whitespace-nowrap ${DISPLAY_COLOR[ds]}`}>{DISPLAY_LABEL[ds]}</span>
             {isRescheduled(r) && <span className="text-[10px] font-semibold uppercase text-blue-400 border border-blue-400/40 px-1 py-px">Rescheduled</span>}
+            {r.trafficSuspended && <span className="text-[10px] font-semibold uppercase text-red-400 border border-red-400/40 px-1 py-px" title="Trains overlapping this block are cancelled / postponed">Cancels trains</span>}
             <span className="text-[11px] text-ops-muted mono" title={r.defectId}>#{shortId(r.defectId)}</span>
             <span className="text-xs font-semibold text-ops-text mono">{r.corridorId}</span>
             <span className="text-xs text-ops-text">{r.defectType.replace(/_/g, " ")}</span>
@@ -86,6 +91,15 @@ function BlockCard({ r }: { r: DefectRequest }) {
       </button>
       {open && (
         <div className="border-t border-ops-border p-3 bg-ops-inset space-y-2">
+          {(() => {
+            const w = waitingFor(r);
+            return w ? (
+              <p className={`text-xs ${w.impossible ? "text-red-400" : "text-amber-400"}`}>
+                <span className="font-semibold uppercase text-[10px] tracking-wide mr-1">Waiting for:</span>
+                {w.text}
+              </p>
+            ) : null;
+          })()}
           {r.lastEventDetails && <p className="text-xs text-ops-muted">{r.lastEventDetails}</p>}
           {r.corridorId ? (
             <CorridorGantt
@@ -110,6 +124,22 @@ function BlockCard({ r }: { r: DefectRequest }) {
 export function MyBlocks({ requests }: { requests: DefectRequest[] }) {
   const [filter, setFilter] = useState<Filter>("active");
   const [query, setQuery] = useState("");
+  const focusRequestId = useAppStore((s) => s.focusRequestId);
+  const focusRequest = useAppStore((s) => s.focusRequest);
+  const [forced, setForced] = useState<string | null>(null);
+
+  // Opened from a notification: show everything, expand it, scroll to it.
+  useEffect(() => {
+    if (!focusRequestId || !requests.some((r) => r.defectId === focusRequestId)) return;
+    setFilter("all");
+    setQuery("");
+    setForced(focusRequestId);
+    const id = window.setTimeout(() => {
+      document.getElementById(`request-${focusRequestId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      focusRequest(null);
+    }, 150);
+    return () => window.clearTimeout(id);
+  }, [focusRequestId, requests, focusRequest]);
 
   const counts = useMemo(() => {
     const c = new Map<Filter, number>();
@@ -155,7 +185,7 @@ export function MyBlocks({ requests }: { requests: DefectRequest[] }) {
       <div className="space-y-1.5">
         {visible.length === 0 && <p className="text-xs text-ops-muted p-4 border border-ops-border">No blocks in this view.</p>}
         {visible.map((r) => (
-          <BlockCard key={r.defectId} r={r} />
+          <BlockCard key={r.defectId} r={r} forceOpen={forced === r.defectId} />
         ))}
       </div>
     </div>

@@ -16,12 +16,12 @@ UPSERT = text(
     INSERT INTO core.defects (
         defect_id, source_system, asset_id, corridor_id, defect_type, severity_code,
         department, detected_date, due_date, speed_restriction_kmph, estimated_block_hours,
-        requested_window_start, requested_window_end, requested_by, workflow_status
+        requested_window_start, requested_window_end, requested_by, workflow_status, traffic_suspended
     )
     VALUES (
         :defect_id, :source_system, :asset_id, :corridor_id, :defect_type, :severity_code,
         :department, :detected_date, :due_date, :speed_restriction_kmph, :estimated_block_hours,
-        :requested_window_start, :requested_window_end, :requested_by, 'pending'
+        :requested_window_start, :requested_window_end, :requested_by, 'pending', :traffic_suspended
     )
     ON CONFLICT (defect_id) DO NOTHING
     RETURNING defect_id
@@ -56,6 +56,7 @@ def conform() -> list[str]:
                         "requested_window_start": p.get("requested_window_start"),
                         "requested_window_end": p.get("requested_window_end"),
                         "requested_by": p.get("requested_by"),
+                        "traffic_suspended": bool(p.get("traffic_suspended", False)),
                     },
                 ).scalar()
                 if inserted_id:

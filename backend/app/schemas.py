@@ -79,6 +79,10 @@ class DefectRequest(BaseModel):
     execution_state: Literal["upcoming", "in_progress", "completed"] | None = None
     # When the clock sweep placed this overdue request into the upcoming week.
     rescheduled_at: datetime | None = None
+    # The section is closed to trains until this job is done.
+    traffic_suspended: bool = False
+    # Longest block window still ahead on the corridor, hours.
+    max_gap_hours: float | None = None
     last_event_type: str | None = None
     last_event_at: datetime | None = None
     last_event_details: str | None = None
@@ -122,6 +126,7 @@ class SubmitRequestBody(BaseModel):
     requested_window_start: datetime | None = None
     requested_window_end: datetime | None = None
     speed_restriction_kmph: int | None = None
+    traffic_suspended: bool = False
 
 
 class SubmitRequestResponse(BaseModel):
@@ -219,6 +224,7 @@ class Notification(BaseModel):
     recipient_role: str
     message: str
     related_request_id: uuid.UUID | None = None
+    related_defect_id: uuid.UUID | None = None
     is_read: bool
     created_at: datetime
 
@@ -301,6 +307,8 @@ class ScheduleAssignment(BaseModel):
     priority_score: float | None = None
     speed_restriction_kmph: int | None = None
     rescheduled_at: datetime | None = None
+    # Trains overlapping this block are cancelled / postponed for it.
+    traffic_suspended: bool = False
 
 
 class ScheduleTraversal(BaseModel):
@@ -328,6 +336,7 @@ class SchedulePendingRequest(BaseModel):
     workflow_status: str
     due_date: date | None = None
     is_overdue: bool = False
+    traffic_suspended: bool = False
 
 
 class GoodsForecastBand(BaseModel):

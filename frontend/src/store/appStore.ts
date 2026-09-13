@@ -25,6 +25,9 @@ interface AppState {
   /** Bumped when a plan's contents change in place (a block accepted/rejected from the Gantt) so KPI panels refetch. */
   planRevision: number;
   bumpPlanRevision: () => void;
+  /** A request to open (from a notification): the dashboards switch to the right tab and the table/card expands it. */
+  focusRequestId: string | null;
+  focusRequest: (id: string | null) => void;
 
   fetchZones: () => Promise<void>;
   setSelectedZone: (zone: string | null) => void;
@@ -34,6 +37,7 @@ interface AppState {
   fetchPlans: () => Promise<void>;
   fetchActiveWeeklyAssignments: () => Promise<void>;
   refetchAll: () => Promise<void>;
+  refreshAll: () => Promise<void>;
   startReset: (confirm: string) => Promise<{ jobId: string }>;
   getResetStatus: (jobId: string) => Promise<ResetJobStatus>;
 
@@ -47,6 +51,7 @@ interface AppState {
     requestedWindowStart?: string;
     requestedWindowEnd?: string;
     speedRestrictionKmph?: number;
+    trafficSuspended?: boolean;
   }) => Promise<{ defectId: string; outcome: string }>;
   respondToReschedule: (requestId: string, accept: boolean) => Promise<void>;
   decideModification: (requestId: string, approve: boolean, reason?: string) => Promise<void>;
@@ -74,6 +79,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   resetEpoch: 0,
   planRevision: 0,
   bumpPlanRevision: () => set({ planRevision: get().planRevision + 1 }),
+  focusRequestId: null,
+  focusRequest: (id) => set({ focusRequestId: id }),
 
 
   fetchZones: async () => {
@@ -111,6 +118,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ plans });
   },
 
+  /** Quiet refresh for live updates: swap data in place, keep every open row, tab and selection. */
+  refreshAll: async () => {
+    await Promise.all([get().fetchZones(), get().fetchRequests(), get().fetchModifications(), get().fetchPlans(), get().fetchNotifications(), get().fetchActiveWeeklyAssignments()]);
+  },
+
+  /** Hard refetch after a system reset: clear everything and remount the page. */
   refetchAll: async () => {
     set({ selectedZone: null, activeAssignments: [], plans: [], requests: [], modifications: [], notifications: [] });
     await get().fetchZones();

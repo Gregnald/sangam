@@ -93,11 +93,12 @@ def sync_with_clock(now: datetime | None = None) -> dict:
                 {"id": o["defect_id"]},
             )
             conn.execute(
-                text("INSERT INTO plan.notifications (recipient_role, message, related_request_id) VALUES (:role, :msg, :req)"),
+                text("INSERT INTO plan.notifications (recipient_role, message, related_request_id, related_defect_id) VALUES (:role, :msg, :req, :d)"),
                 {
                     "role": o["requesting_department"],
-                    "msg": f"The alternate window offered on {o['proposed_corridor_id']} has passed without a response. The request is back in the backlog.",
+                    "msg": f"Lapsed: the alternate window offered on {o['proposed_corridor_id']} (#{str(o['defect_id'])[:8].upper()}) passed without a response. The request is back in the backlog.",
                     "req": o["request_id"],
+                    "d": o["defect_id"],
                 },
             )
         if offers:
@@ -129,11 +130,12 @@ def sync_with_clock(now: datetime | None = None) -> dict:
                 {"id": b["defect_id"]},
             )
             conn.execute(
-                text("INSERT INTO plan.notifications (recipient_role, message, related_request_id) VALUES (:role, :msg, :req)"),
+                text("INSERT INTO plan.notifications (recipient_role, message, related_request_id, related_defect_id) VALUES (:role, :msg, :req, :d)"),
                 {
                     "role": b["requesting_department"],
-                    "msg": f"Your priority-bump request on {b['proposed_corridor_id']} lapsed: the block it targeted has already run. The request is back in the backlog.",
+                    "msg": f"Lapsed: your bump request on {b['proposed_corridor_id']} (#{str(b['defect_id'])[:8].upper()}) — the block it targeted has already run. The request is back in the backlog.",
                     "req": b["request_id"],
+                    "d": b["defect_id"],
                 },
             )
         if bumps:
@@ -143,6 +145,9 @@ def sync_with_clock(now: datetime | None = None) -> dict:
     result = {"completed": completed, "lapsed_offers": lapsed_offers, "lapsed_bumps": lapsed_bumps}
     if any(result.values()):
         logger.info("clock sync: %s", result)
+        from app import live
+
+        live.bump("clock")
 
     global _overdue_swept_on
     today = now.astimezone(IST).date()
@@ -153,7 +158,12 @@ def sync_with_clock(now: datetime | None = None) -> dict:
             sweep = reschedule_overdue(today)
             result["overdue_rescheduled"] = sweep["rescheduled"]
             result["due_soon_scheduled"] = sweep["scheduled"]
+            result["urgent_placed"] = sweep.get("urgent", 0)
             _overdue_swept_on = today
+            if any(v for k, v in sweep.items() if k in ("rescheduled", "scheduled", "urgent")) or sweep.get("pinned"):
+                from app import live
+
+                live.bump("sweep")
         except Exception:  # noqa: BLE001 - the sweep must never break the clock
             logger.exception("overdue reschedule sweep failed; will retry next tick")
     return result

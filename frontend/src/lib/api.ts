@@ -1,4 +1,10 @@
-const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+// Backend base URL.
+//  - VITE_API_URL wins when set.
+//  - Under the Vite dev server (`npm run dev` / electron:dev) use relative
+//    URLs: vite.config.ts proxies /api/* to the backend, so the page works
+//    through tunnels and LAN IPs without CORS or mixed-content trouble.
+//  - Packaged Electron loads from file://, so fall back to the local backend.
+const API_BASE: string = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "" : "http://127.0.0.1:8000");
 
 export class ApiError extends Error {
   status: number;

@@ -427,3 +427,116 @@ export function WorkTypesChart({ d }: { d: MonthAnalytics }) {
     </ResponsiveContainer>
   );
 }
+
+// ---------------------------------------------------------------- distribution over the month
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const dayKeyOf = (dt: Date) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+
+/**
+ * Calendar heatmap: one cell per day of the month, shaded by the chosen
+ * metric, with the value in the cell. Reads like a wall calendar, so
+ * clustering (everything on one weekend) is obvious at a glance.
+ */
+export function MonthCalendarChart({ d }: { d: MonthAnalytics }) {
+  const [metric, setMetric] = useState<"hours" | "blockEvents" | "jobs">("hours");
+  const by = new Map(d.daily.map((r) => [r.day, r]));
+  const start = new Date(d.start + "T00:00:00");
+  const lead = (start.getDay() + 6) % 7; // Monday-first offset
+  const cells: { day: string; n: number; label: string; r?: (typeof d.daily)[number] }[] = [];
+  for (let i = 0; i < d.days; i++) {
+    const dt = new Date(start);
+    dt.setDate(start.getDate() + i);
+    const key = dayKeyOf(dt);
+    cells.push({ day: key, n: dt.getDate(), label: dt.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }), r: by.get(key) });
+  }
+  const max = Math.max(1, ...cells.map((c) => c.r?.[metric] ?? 0));
+  const todayKey = dayKeyOf(new Date());
+  const busiest = [...cells].sort((a, b) => (b.r?.[metric] ?? 0) - (a.r?.[metric] ?? 0)).slice(0, 3).filter((c) => (c.r?.[metric] ?? 0) > 0);
+  const daysWithBlocks = cells.filter((c) => (c.r?.blockEvents ?? 0) > 0).length;
+  const totalHours = cells.reduce((t, c) => t + (c.r?.hours ?? 0), 0);
+  const weekendHours = cells
+    .filter((c) => {
+      const dow = new Date(c.day + "T00:00:00").getDay();
+      return dow === 0 || dow === 6;
+    })
+    .reduce((t, c) => t + (c.r?.hours ?? 0), 0);
+  const weekendShare = totalHours > 0 ? (weekendHours / totalHours) * 100 : 0;
+  if (!d.summary.blockEvents) return <Empty text="No blocks in this month" />;
+  const fmtCell = (c: (typeof cells)[number]) => (metric === "hours" ? `${(c.r?.hours ?? 0).toFixed(0)} h` : String(c.r?.[metric] ?? 0));
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center gap-1 px-1 pb-1 text-[10px]">
+        {(
+          [
+            ["hours", "Possession h"],
+            ["blockEvents", "Block events"],
+            ["jobs", "Jobs"],
+          ] as const
+        ).map(([k, label]) => (
+          <button key={k} onClick={() => setMetric(k)} className={`px-2 py-0.5 rounded ${metric === k ? "bg-ops-accent text-white" : "text-ops-muted hover:text-ops-text"}`}>
+            {label}
+          </button>
+        ))}
+        <span className="ml-auto text-ops-muted truncate">
+          {daysWithBlocks} of {d.days} days carry blocks · {weekendShare.toFixed(0)}% of hours on weekends
+          {busiest.length ? ` · busiest: ${busiest.map((c) => `${c.n} (${fmtCell(c)})`).join(", ")}` : ""}
+        </span>
+      </div>
+      <div className="grid grid-cols-7 gap-1 px-1 text-[10px] text-ops-muted">
+        {WEEKDAYS.map((w) => (
+          <div key={w} className="text-center uppercase tracking-wide">
+            {w}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-1 px-1 pt-1 flex-1 auto-rows-fr">
+        {Array.from({ length: lead }, (_, i) => (
+          <div key={`lead-${i}`} />
+        ))}
+        {cells.map((c) => {
+          const v = c.r?.[metric] ?? 0;
+          const t = v / max;
+          const isToday = c.day === todayKey;
+          const isPast = c.day < todayKey;
+          return (
+            <div
+              key={c.day}
+              className={`relative rounded-sm border px-1.5 py-1 min-h-9 ${isToday ? "border-ops-accent" : "border-ops-border"} ${isPast ? "opacity-70" : ""}`}
+              style={{ background: v > 0 ? `color-mix(in srgb, var(--ops-accent) ${Math.round(12 + t * 78)}%, transparent)` : "var(--ops-inset)" }}
+              title={`${c.label}: ${c.r?.blockEvents ?? 0} block events · ${c.r?.jobs ?? 0} jobs · ${(c.r?.hours ?? 0).toFixed(1)} h possession · ${c.r?.corridors ?? 0} corridors`}
+            >
+              <span className={`text-[10px] mono ${v > 0 && t > 0.55 ? "text-white" : "text-ops-muted"}`}>{c.n}</span>
+              {v > 0 && <span className={`absolute right-1.5 bottom-0.5 text-[11px] font-semibold mono ${t > 0.55 ? "text-white" : "text-ops-text"}`}>{fmtCell(c)}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** When in the day possessions happen: starts per hour, and possession-hours falling in each hour of the day. */
+export function TimeOfDayChart({ d }: { d: MonthAnalytics }) {
+  const rows = d.hourly.map((h) => ({ ...h, label: String(h.hour).padStart(2, "0") }));
+  if (!d.summary.blockEvents) return <Empty text="No blocks in this month" />;
+  const night = d.hourly.filter((h) => h.hour < 6 || h.hour >= 22).reduce((t, h) => t + h.possessionHours, 0);
+  const total = d.hourly.reduce((t, h) => t + h.possessionHours, 0);
+  return (
+    <div className="h-full flex flex-col">
+      <p className="px-1 pb-1 text-[10px] text-ops-muted">{total > 0 ? `${((night / total) * 100).toFixed(0)}% of possession hours fall between 22:00 and 06:00` : ""}</p>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={rows} margin={{ top: 8, right: 12, left: -10, bottom: 0 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis dataKey="label" tickLine={false} axisLine={AXIS} interval={2} />
+          <YAxis yAxisId="l" tickLine={false} axisLine={false} width={40} />
+          <YAxis yAxisId="r" orientation="right" tickLine={false} axisLine={false} width={34} allowDecimals={false} />
+          <Tooltip content={<Tip labelText={(l) => `${l}:00 – ${String((Number(l) + 1) % 24).padStart(2, "0")}:00`} />} cursor={{ fill: "var(--ops-hover)" }} />
+          <Legend iconType="circle" iconSize={8} />
+          <Bar yAxisId="l" dataKey="possessionHours" name="Possession h in this hour" fill={ACCENT} radius={[3, 3, 0, 0]} maxBarSize={22} />
+          <Line yAxisId="r" type="monotone" dataKey="blockStarts" name="Blocks starting" stroke={WARN} strokeWidth={1.6} dot={{ r: 2 }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}

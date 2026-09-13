@@ -59,6 +59,10 @@ export interface DefectRequest {
   executionState: ExecutionState | null;
   /** Set when the clock sweep placed this overdue request into the upcoming week. */
   rescheduledAt: string | null;
+  /** Trains overlapping this job's block are cancelled / postponed. */
+  trafficSuspended: boolean;
+  /** Longest block window still ahead on the corridor, in hours. */
+  maxGapHours: number | null;
   lastEventType: string | null;
   lastEventAt: string | null;
   lastEventDetails: string | null;
@@ -160,6 +164,7 @@ export interface Notification {
   recipientRole: Role;
   message: string;
   relatedRequestId: string | null;
+  relatedDefectId: string | null;
   isRead: boolean;
   createdAt: string;
 }
@@ -214,6 +219,7 @@ export interface ScheduleAssignment {
   priorityScore: number | null;
   speedRestrictionKmph: number | null;
   rescheduledAt: string | null;
+  trafficSuspended: boolean;
 }
 
 export interface ScheduleTraversal {
@@ -238,7 +244,9 @@ export interface SchedulePendingRequest {
   workflowStatus: WorkflowStatus;
   dueDate: string | null;
   isOverdue: boolean;
+  trafficSuspended: boolean;
 }
+
 
 export interface GoodsForecastBand {
   forecastId: string;

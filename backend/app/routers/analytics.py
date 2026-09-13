@@ -10,7 +10,7 @@ with the bundling counterfactual (every job as its own block) alongside.
 from __future__ import annotations
 
 import calendar
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import text
@@ -83,7 +83,7 @@ def compute_month(db, period: str, zone: str | None) -> dict:
             f"""
             SELECT a.assignment_id, a.window_id, a.corridor_id, a.defect_id, a.department, a.allocated_start, a.allocated_end,
                    a.joint_block_group_id, c.zone, c.train_count, c.station_a_code, c.station_b_code,
-                   d.severity_code, d.due_date, d.defect_type, d.priority_score, d.speed_restriction_kmph, d.rescheduled_at, d.workflow_status,
+                   d.severity_code, d.due_date, d.defect_type, d.priority_score, d.speed_restriction_kmph, d.rescheduled_at, d.workflow_status, d.traffic_suspended,
                    p.period_label AS plan_period_label, p.approved_by
             FROM plan.block_assignments a
             JOIN plan.block_plans p ON p.plan_id = a.plan_id
@@ -247,6 +247,22 @@ def compute_month(db, period: str, zone: str | None) -> dict:
     for g in by_window.values():
         daily[_day(min(g, key=lambda x: x["allocated_start"]))]["block_events"] += 1
 
+    # Time-of-day profile: how many possessions start in each hour, and how
+    # many possession-minutes fall in each hour of the day (a block 01:30–
+    # 04:00 puts 30 min in hour 1, 60 in 2, 60 in 3).
+    hourly = [{"hour": h, "block_starts": 0, "possession_minutes": 0} for h in range(24)]
+    for g in by_window.values():
+        b_start = min(x["allocated_start"] for x in g).astimezone(IST)
+        b_end = max(x["allocated_end"] for x in g).astimezone(IST)
+        hourly[b_start.hour]["block_starts"] += 1
+        cursor = b_start
+        while cursor < b_end:
+            nxt = min(b_end, (cursor + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0))
+            hourly[cursor.hour]["possession_minutes"] += int((nxt - cursor).total_seconds() // 60)
+            cursor = nxt
+    for h in hourly:
+        h["possession_hours"] = round(h["possession_minutes"] / 60.0, 2)
+
     # ---- backlog -----------------------------------------------------------
     status_counts: dict[str, int] = {}
     sev_counts: dict[str, int] = {}
@@ -272,6 +288,30 @@ def compute_month(db, period: str, zone: str | None) -> dict:
     for k in sorted(daily):
         e = daily[k]
         day_rows.append({"day": k, "jobs": e["jobs"], "hours": round(e["hours"], 2), "corridors": len(e["corridors"]), "block_events": e["block_events"]})
+
+    # Blocks that cancel trains: a flagged job's block overlaps timetabled
+    # passages, and those runs are cancelled or postponed for it.
+    flagged = [a for a in assignments if a["traffic_suspended"]]
+    trains_cancelled = 0
+    closure_rows = []
+    if flagged:
+        from etl.timetable import traversals_for_version, version_for_day
+
+        cache: dict[int, dict[str, list[tuple[int, int]]]] = {}
+        cids = sorted({a["corridor_id"] for a in flagged})
+        for a in flagged:
+            day = a["allocated_start"].astimezone(IST).date()
+            s_min = a["allocated_start"].astimezone(IST).hour * 60 + a["allocated_start"].astimezone(IST).minute
+            e_min = s_min + int((a["allocated_end"] - a["allocated_start"]).total_seconds() // 60)
+            vid = version_for_day(db, day)
+            n = 0
+            if vid is not None:
+                if vid not in cache:
+                    cache[vid] = traversals_for_version(db, vid, cids)
+                n = sum(1 for dep, arr in cache[vid].get(a["corridor_id"], []) if dep < e_min and arr > s_min)
+            trains_cancelled += n
+            closure_rows.append({"defect_id": str(a["defect_id"]), "corridor_id": a["corridor_id"], "zone": a["zone"], "department": a["department"], "defect_type": a["defect_type"],
+                                 "block_start": a["allocated_start"], "block_end": a["allocated_end"], "trains_cancelled": n})
 
     scores = [float(d["priority_score"]) for d in backlog if d["priority_score"] is not None]
     defers = [int(d["defer_count"] or 0) for d in backlog]
@@ -311,12 +351,16 @@ def compute_month(db, period: str, zone: str | None) -> dict:
             "avg_priority": round(sum(scores) / len(scores), 1) if scores else None,
             "avg_defer_count": round(sum(defers) / len(defers), 2) if defers else 0.0,
             "max_defer_count": max(defers) if defers else 0,
+            "blocks_cancelling_trains": len(closure_rows),
+            "trains_cancelled": trains_cancelled,
         },
+        "closures": closure_rows,
         "status_counts": status_counts,
         "severity_counts": sev_counts,
         "departments": dept,
         "work_types": work_rows,
         "daily": day_rows,
+        "hourly": hourly,
         "zones": zone_rows,
         "corridors": corridor_rows,
         # raw distributions, binned client-side

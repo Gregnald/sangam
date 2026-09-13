@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from app.routers import admin, analytics, auth, compatibility, corridors, ingestion, modifications, notifications, plans, requests
 
@@ -46,6 +47,34 @@ def stop_clock() -> None:
     scheduler = getattr(app.state, "scheduler", None)
     if scheduler:
         scheduler.shutdown(wait=False)
+
+@app.middleware("http")
+async def _bump_on_mutation(request: Request, call_next):
+    """Every successful mutating API call moves the live data version, so
+    open screens refetch without anyone pressing refresh."""
+    response = await call_next(request)
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/") and not request.url.path.startswith("/api/v1/auth") and 200 <= response.status_code < 300:
+        from app import live
+
+        live.bump(request.url.path)
+    return response
+
+
+@app.get("/api/v1/events/stream")
+def events_stream(token: str = Query(...)):
+    """Server-Sent Events: a `change` frame whenever anything changed.
+    EventSource can't send headers, so the JWT rides in the query."""
+    import jwt
+
+    from app import live
+    from app.config import get_settings
+
+    try:
+        jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "invalid token") from None
+    return StreamingResponse(live.stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
 
 app.add_middleware(
     CORSMiddleware,

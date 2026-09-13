@@ -26,6 +26,10 @@ DEPARTMENT_ACCOUNT = {"ENGG": "engg_dept", "SIGNAL": "snt_dept", "TRD": "trd_dep
 RAW_TABLE = {"TMS": "raw.defects_tms", "SMMS": "raw.defects_smms", "TDMS": "raw.defects_tdms"}
 
 BACKLOG_REQUIRED_COLUMNS = ["corridor_id", "defect_type", "severity_code", "detected_date", "due_date", "estimated_block_hours"]
+
+
+def _truthy(value) -> bool:
+    return str(value).strip().lower() in ("1", "true", "yes", "y", "t") if value not in (None, "") else False
 SCHEDULE_REQUIRED_COLUMNS = ["train_number", "station_code"]
 GOODS_REQUIRED_COLUMNS = ["corridor_id", "forecast_date", "band_start", "band_end"]
 
@@ -113,6 +117,9 @@ def ingest_backlog(department: str, rows: list[dict], requested_by: str) -> dict
                     "detected_date": _to_date_str(row["detected_date"]),
                     "due_date": _to_date_str(row["due_date"]),
                     "speed_restriction_kmph": int(row["speed_restriction_kmph"]) if row.get("speed_restriction_kmph") not in (None, "") else None,
+                    # Optional: the section is closed to traffic until repaired.
+                    # A speed restriction of 0 means the same thing.
+                    "traffic_suspended": _truthy(row.get("traffic_suspended")) or (row.get("speed_restriction_kmph") not in (None, "") and int(row["speed_restriction_kmph"]) == 0),
                     "estimated_block_hours": float(row["estimated_block_hours"]),
                     # Optional: the department's preferred block window. Drives
                     # the "Requested" bars on the Gantt and the pinned-time

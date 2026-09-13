@@ -2,7 +2,7 @@ import { useState } from "react";
 import { WeeklyPlanView } from "./WeeklyPlanView";
 import { PlanKpiPanel } from "./PlanKpiPanel";
 import { useAppStore } from "../store/appStore";
-import { fmtDate, mondayOf, planPeriodLabel } from "../lib/dates";
+import { fmtDate, mondayOf, monthLabel, planPeriodLabel } from "../lib/dates";
 import type { BlockPlan } from "../types/api";
 
 function weekState(start: Date, end: Date): "past" | "current" | "upcoming" {
@@ -120,7 +120,53 @@ export function MonthPlanCard({
   );
 }
 
-function WeekRow({ start, end, state, approved, zone, planId }: { start: Date; end: Date; state: string; approved: boolean; zone: string | null; planId?: string | null }) {
+/** The weeks of a month when the zone has no monthly plan but does have approved weekly plans: each week shows the live schedule. */
+export function MonthFromWeeklyCard({ period, zone, weeklyPlans }: { period: string; zone: string | null; weeklyPlans: BlockPlan[] }) {
+  const [expanded, setExpanded] = useState(true);
+  const [y, m] = period.split("-").map(Number);
+  const monthStart = new Date(y, m - 1, 1);
+  const monthEnd = new Date(y, m, 0);
+  const weeks: { start: Date; end: Date }[] = [];
+  const seen = new Set<string>();
+  const cursor = new Date(monthStart);
+  while (cursor <= monthEnd) {
+    const start = mondayOf(cursor);
+    const key = fmtDate(start);
+    if (!seen.has(key)) {
+      seen.add(key);
+      const wend = new Date(start);
+      wend.setDate(start.getDate() + 6);
+      weeks.push({ start, end: wend });
+    }
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  const covered = weeks.filter((w) => weeklyPlans.some((wp) => wp.horizonStart === fmtDate(w.start) && wp.status === "approved" && wp.zone === zone));
+  return (
+    <div className="border border-ops-border">
+      <div role="button" tabIndex={0} onClick={() => setExpanded((e) => !e)} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setExpanded((v) => !v)} className="w-full flex items-center justify-between px-3 py-2.5 text-left hover:bg-ops-hover cursor-pointer">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-xs font-semibold text-ops-text">{monthLabel(period)}</span>
+          <span className="text-[10px] uppercase font-semibold text-amber-400">no monthly plan</span>
+          <span className="text-[10px] text-ops-muted">{zone}</span>
+          <span className="text-[10px] text-ops-muted">
+            {covered.length} of {weeks.length} weeks have an approved weekly plan
+          </span>
+        </div>
+        <span className="text-ops-muted text-[10px]">{expanded ? "▲" : "▼"}</span>
+      </div>
+      {expanded && (
+        <div className="border-t border-ops-border divide-y divide-ops-border">
+          {weeks.map((w) => {
+            const approved = weeklyPlans.some((wp) => wp.horizonStart === fmtDate(w.start) && wp.status === "approved" && wp.zone === zone);
+            return <WeekRow key={fmtDate(w.start)} start={w.start} end={w.end} state={weekState(w.start, w.end)} approved={approved} zone={zone} planId={null} noPlanText={approved ? undefined : "no plan for this week yet"} />;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WeekRow({ start, end, state, approved, zone, planId, noPlanText }: { start: Date; end: Date; state: string; approved: boolean; zone: string | null; planId?: string | null; noPlanText?: string }) {
   const [open, setOpen] = useState(false);
   const stateLabel = state === "past" ? "Past" : state === "current" ? "Current" : "Upcoming";
   const stateColor = state === "past" ? "text-ops-muted" : state === "current" ? "text-emerald-400" : "text-blue-400";
@@ -130,7 +176,7 @@ function WeekRow({ start, end, state, approved, zone, planId }: { start: Date; e
         <span className="text-[11px] text-ops-text">
           Week of {start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – {end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}{" "}
           <span className={`font-semibold ${stateColor}`}>{stateLabel}</span>
-          {!approved && <span className="text-[10px] text-ops-muted ml-2">(from monthly plan)</span>}
+          {!approved && <span className="text-[10px] text-ops-muted ml-2">({noPlanText ?? "from monthly plan"})</span>}
         </span>
         <span className="text-ops-muted text-[10px]">{open ? "▲" : "▼"}</span>
       </button>

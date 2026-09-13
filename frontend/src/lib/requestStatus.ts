@@ -54,6 +54,14 @@ export const EVENT_LABEL: Record<string, string> = {
   scheduled: "Scheduled",
   plan_scheduled: "Placed by approved plan",
   auto_rescheduled: "Rescheduled (was overdue)",
+  no_fit: "No slot found (see details)",
+  block_accepted: "Block accepted by controller",
+  block_rejected: "Block rejected by controller",
+  block_removed: "Block removed by controller",
+  replace_requested: "Controller asked for a different slot",
+  force_bump: "Controller forced placement",
+  traffic_suspended: "Declared unsafe for trains",
+  traffic_restored: "Trains may run again",
   reschedule_offered: "Alternate window offered",
   reschedule_accepted: "Offer accepted by department",
   reschedule_rejected: "Offer rejected by department",
@@ -69,6 +77,28 @@ export const EVENT_LABEL: Record<string, string> = {
 /** Short form of a request id for display; the full UUID goes in a title/tooltip. */
 export function shortId(id: string): string {
   return id.slice(0, 8).toUpperCase();
+}
+
+/**
+ * What an unplaced request is waiting for, in one sentence — or null when
+ * it isn't waiting (scheduled / done). The one hard case is a job longer
+ * than any timetable gap on its corridor: nothing will ever place it unless
+ * the section can be closed to trains for it.
+ */
+export function waitingFor(r: DefectRequest): { text: string; impossible: boolean } | null {
+  if (r.workflowStatus === "scheduled" || r.workflowStatus === "completed" || r.workflowStatus === "cleared") return null;
+  if (r.workflowStatus === "awaiting_dept_response") return { text: "An alternate window has been offered — waiting for the department to accept or reject it.", impossible: false };
+  if (r.workflowStatus === "awaiting_controller") return { text: "Waiting for the controller to decide the bump / reschedule request.", impossible: false };
+  if (r.trafficSuspended) return { text: "Flagged unsafe for trains — will be placed over the timetable at the next sweep.", impossible: false };
+  if (r.maxGapHours != null && r.estimatedBlockHours > r.maxGapHours + 1e-6) {
+    return {
+      text: `No timetable gap on this corridor is long enough: needs ${r.estimatedBlockHours.toFixed(2)} h, longest gap ahead is ${r.maxGapHours.toFixed(2)} h. Nothing will place it until the block can run over the timetable (cancel trains), the job is split, or the timetable changes.`,
+      impossible: true,
+    };
+  }
+  if (r.priorityScore == null) return { text: "Not scored yet — placed once the priority model has run.", impossible: false };
+  if (r.isOverdue) return { text: "Overdue: the daily sweep retries every week ahead each morning; it fits a gap but every fitting slot so far is taken.", impossible: false };
+  return { text: "Waiting for a slot: the next plan solve, the daily sweep (due within 14 days), or an offer.", impossible: false };
 }
 
 /** An overdue request the clock placed into the upcoming week, still holding that block. */

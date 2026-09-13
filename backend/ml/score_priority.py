@@ -34,6 +34,9 @@ FRIENDLY_NAMES = {
 }
 
 SAFETY_FLOOR_SCORE = 90.0
+# A fault whose repair cancels trains outranks even the safety floor — the
+# sooner the block runs, the fewer days the line stays unsafe.
+CLOSED_SECTION_SCORE = 98.0
 
 
 def _min_max_0_100(values: np.ndarray) -> np.ndarray:
@@ -57,7 +60,7 @@ def score() -> int:
                     """
                     SELECT defect_id, severity_code, detected_date, due_date,
                            speed_restriction_kmph, estimated_block_hours, defect_type,
-                           corridor_id, department, defer_count
+                           corridor_id, department, defer_count, traffic_suspended
                     FROM core.defects
                     WHERE workflow_status NOT IN ('cleared', 'completed')
                     """
@@ -75,7 +78,9 @@ def score() -> int:
         scaled = _min_max_0_100(raw_scores)
 
         safety_floor = (df["severity_code"] == "A").to_numpy() & (X["speed_restriction_active"].to_numpy() == 1)
+        closed = df["traffic_suspended"].fillna(False).to_numpy().astype(bool)
         final = np.where(safety_floor, np.maximum(scaled, SAFETY_FLOOR_SCORE), scaled)
+        final = np.where(closed, np.maximum(final, CLOSED_SECTION_SCORE), final)
 
         explainer = shap.TreeExplainer(model.get_booster())
         shap_values = explainer.shap_values(X)
@@ -89,6 +94,8 @@ def score() -> int:
             ]
             if safety_floor[i]:
                 explanation.insert(0, {"factor": "Safety floor: Severity A + active speed restriction", "score": 100.0})
+            if closed[i]:
+                explanation.insert(0, {"factor": "Trains cancelled during block (section unsafe)", "score": 100.0})
 
             conn.execute(
                 text(

@@ -27,6 +27,8 @@ export interface Summary {
   avgPriority: number | null;
   avgDeferCount: number;
   maxDeferCount: number;
+  blocksCancellingTrains: number;
+  trainsCancelled: number;
 }
 export interface CorridorRow {
   corridorId: string;
@@ -76,8 +78,10 @@ export interface MonthAnalytics {
   departments: Record<string, { jobs: number; hours: number; open: number; overdue: number; rescheduled: number }>;
   workTypes: { defectType: string; department: string; jobs: number; hours: number; open: number }[];
   daily: { day: string; jobs: number; hours: number; corridors: number; blockEvents: number }[];
+  hourly: { hour: number; blockStarts: number; possessionMinutes: number; possessionHours: number }[];
   zones: ZoneRow[];
   corridors: CorridorRow[];
   priorityScores: number[];
   latenessDays: number[];
+  closures: { defectId: string; corridorId: string; zone: string; department: string; defectType: string; blockStart: string; blockEnd: string; trainsCancelled: number }[];
 }

@@ -119,6 +119,9 @@ def _load_jobs(conn, corridor_ids: list[str], horizon_start: date, horizon_end: 
               -- overdue (due_date < today), it's fair game for any horizon,
               -- since nothing will make it on-time anymore anyway.
               AND (d.due_date IS NULL OR d.due_date < CURRENT_DATE OR d.due_date >= :horizon_start)
+              -- A fault unsafe for traffic is placed over the timetable by
+              -- the workflow, not into a gap by the solver.
+              AND NOT d.traffic_suspended
             """
         ),
         {"corridor_ids": corridor_ids, "horizon_start": horizon_start, "horizon_end": horizon_end},
@@ -170,6 +173,32 @@ def _load_windows(conn, corridor_ids: list[str], horizon_start: date, horizon_en
     # gaps — a freight path expected through a slot makes that slot
     # unavailable for a block exactly as a timetabled train would.
     return clip_windows(out, load_bands(conn, corridor_ids, horizon_start, horizon_end))
+
+
+def _carry_urgent_blocks(conn, plan_id: str, corridor_ids: list[str], horizon_start: date, horizon_end: date) -> int:
+    """Copy the live blocks of traffic-unsafe faults inside this horizon into
+    a freshly solved plan, exactly as they stand. They were placed over the
+    timetable by the workflow and must survive a re-solve; otherwise
+    approving the new plan would release them and the sweep would put them
+    straight back."""
+    rows = conn.execute(
+        text(
+            """
+            SELECT DISTINCT ON (a.defect_id) a.window_id, a.corridor_id, a.defect_id, a.department, a.allocated_start, a.allocated_end
+            FROM plan.block_assignments a
+            JOIN plan.block_plans p ON p.plan_id = a.plan_id
+            JOIN core.defects d ON d.defect_id = a.defect_id
+            WHERE p.status = 'approved' AND d.traffic_suspended AND d.workflow_status = 'scheduled'
+              AND a.corridor_id = ANY(:ids) AND a.allocated_start::date BETWEEN :hs AND :he
+              AND NOT EXISTS (SELECT 1 FROM plan.block_assignments b WHERE b.plan_id = :plan AND b.defect_id = a.defect_id)
+            ORDER BY a.defect_id, (p.horizon_type = 'weekly') DESC, a.allocated_start DESC
+            """
+        ),
+        {"ids": corridor_ids, "hs": horizon_start, "he": horizon_end, "plan": plan_id},
+    ).mappings().all()
+    for r in rows:
+        _insert_assignment(conn, plan_id, r["window_id"], r["corridor_id"], r["defect_id"], r["department"], r["allocated_start"], r["allocated_end"], None)
+    return len(rows)
 
 
 def _snapshot(conn, plan_id: str, horizon_type: str, period_label: str, snapshot_type: str) -> None:
@@ -265,6 +294,7 @@ def run_plan(
 
         for a in result.assignments:
             _insert_assignment(conn, plan_id, a.window_id, a.corridor_id, a.defect_id, a.department, a.allocated_start, a.allocated_end, a.joint_block_group_id)
+        _carry_urgent_blocks(conn, plan_id, corridor_ids, horizon_start, horizon_end)
 
         _snapshot(conn, plan_id, horizon_type, period_label, "proposed")
 
@@ -365,6 +395,7 @@ def regenerate_current_month_plan(zone: str | None = None, time_limit_s: int = 1
 
         for a in result.assignments:
             _insert_assignment(conn, plan_id, a.window_id, a.corridor_id, a.defect_id, a.department, a.allocated_start, a.allocated_end, a.joint_block_group_id)
+        carried += _carry_urgent_blocks(conn, plan_id, corridor_ids, start, end)
 
         logger.info("carried over %d frozen assignments from history/locked weeks", carried)
         _snapshot(conn, plan_id, "monthly", label, "proposed")

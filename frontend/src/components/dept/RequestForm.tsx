@@ -23,6 +23,7 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
   const [hours, setHours] = useState(3);
   const [dueDate, setDueDate] = useState("");
   const [speedRestriction, setSpeedRestriction] = useState(false);
+  const [trafficSuspended, setTrafficSuspended] = useState(false);
   const [preferredDate, setPreferredDate] = useState("");
   const [preferredTime, setPreferredTime] = useState("");
   const [result, setResult] = useState<{ outcome: string } | null>(null);
@@ -66,6 +67,7 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
         requestedWindowStart,
         requestedWindowEnd,
         speedRestrictionKmph: speedRestriction ? 20 : undefined,
+        trafficSuspended,
       });
       setResult(res);
     } catch (err) {
@@ -159,9 +161,13 @@ export function RequestForm({ zone, onClose }: { zone: string | null; onClose: (
           </div>
         </div>
 
-        <label className="flex items-center gap-2 mb-4 text-xs text-ops-muted">
+        <label className="flex items-center gap-2 mb-2 text-xs text-ops-muted">
           <input type="checkbox" checked={speedRestriction} onChange={(e) => setSpeedRestriction(e.target.checked)} />
           Active speed restriction on this asset
+        </label>
+        <label className="flex items-center gap-2 mb-4 text-xs text-red-400">
+          <input type="checkbox" checked={trafficSuspended} onChange={(e) => setTrafficSuspended(e.target.checked)} />
+          Trains cannot run during this block — cancel / postpone the ones it overlaps
         </label>
 
         {error && <p className="text-xs text-red-400 mb-3">{error}</p>}

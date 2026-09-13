@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, qs } from "../lib/api";
+import { useAppStore } from "../store/appStore";
 import { CorridorPicker } from "./CorridorPicker";
 import { CorridorGantt } from "./CorridorGantt";
 
@@ -9,6 +10,7 @@ export function WeeklyPlanView({ zone, weekStart, weekEnd, planId }: { zone: str
   // draws — shown in the corridor picker so the corridors with work on them
   // can be found without opening each one.
   const [blockCounts, setBlockCounts] = useState<Record<string, number>>({});
+  const planRevision = useAppStore((s) => s.planRevision);
 
   useEffect(() => {
     if (!zone) return;
@@ -24,7 +26,7 @@ export function WeeklyPlanView({ zone, weekStart, weekEnd, planId }: { zone: str
     return () => {
       cancelled = true;
     };
-  }, [zone, weekStart, weekEnd, planId]);
+  }, [zone, weekStart, weekEnd, planId, planRevision]);
 
   return (
     <div className="p-3 space-y-2 bg-ops-inset">

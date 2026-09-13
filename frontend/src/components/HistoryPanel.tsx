@@ -159,9 +159,10 @@ const DEPT_SUB_TABS: readonly SubTab[] = ["Plans", "Backlog", "Modifications"];
 
 function ModelVersions() {
   const [versions, setVersions] = useState<ModelVersion[]>([]);
+  const planRevision = useAppStore((s) => s.planRevision);
   useEffect(() => {
     api.get<ModelVersion[]>("/api/v1/plans/models").then(setVersions);
-  }, []);
+  }, [planRevision]);
   return (
     <div className="space-y-2">
       <div className="border border-ops-border overflow-x-auto">
@@ -204,18 +205,31 @@ function ModelVersions() {
 export function HistoryPanel({ scope }: { scope: "own" | "all" }) {
   const [sub, setSub] = useState<SubTab>("Plans");
   const [entries, setEntries] = useState<PlanHistoryEntry[]>([]);
+  const [histQuery, setHistQuery] = useState("");
+  const [histHorizon, setHistHorizon] = useState("");
+  const [histZone, setHistZone] = useState("");
   const [modifications, setModifications] = useState<ModificationRequest[]>([]);
-  const { plans, fetchPlans, zones, fetchZones, selectedZone } = useAppStore();
+  const { plans, fetchPlans, zones, fetchZones, selectedZone, planRevision } = useAppStore();
 
   useEffect(() => {
     api.get<PlanHistoryEntry[]>("/api/v1/plans/history").then(setEntries);
     api.get<ModificationRequest[]>("/api/v1/modifications").then(setModifications);
     fetchPlans();
     if (zones.length === 0) fetchZones();
-  }, [fetchPlans, fetchZones, zones.length]);
+  }, [fetchPlans, fetchZones, zones.length, planRevision]);
 
   const decided = modifications.filter((m) => m.status === "approved" || m.status === "rejected" || m.status === "lapsed");
-  const groups = Array.from(groupByPeriod(entries).entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  const q = histQuery.trim().toLowerCase();
+  const groups = Array.from(groupByPeriod(entries).entries())
+    .filter(([key]) => {
+      const [h, period, z] = key.split("::");
+      if (histHorizon && h !== histHorizon) return false;
+      if (histZone && z !== histZone) return false;
+      if (q && !`${periodLabelText(h, period)} ${period} ${z}`.toLowerCase().includes(q)) return false;
+      return true;
+    })
+    .sort((a, b) => b[0].localeCompare(a[0]));
+  const histZones = [...new Set(entries.map((e) => e.zone).filter((z): z is string => Boolean(z)))].sort();
 
   const activePeriodKeys = new Set(
     plans.filter((p) => p.status === "approved" && planTimeState(p.horizonStart, p.horizonEnd) !== "past").map((p) => `${p.horizonType}::${p.periodLabel}::${p.zone ?? ""}`)
@@ -254,7 +268,26 @@ export function HistoryPanel({ scope }: { scope: "own" | "all" }) {
       {sub === "Plans" && (
       <div className="space-y-6">
       <div>
-        <h3 className="text-xs font-semibold text-ops-text mb-2">Schedule History</h3>
+        <div className="flex items-center gap-2 flex-wrap mb-2 text-xs">
+          <h3 className="text-xs font-semibold text-ops-text mr-2">Schedule History</h3>
+          <input value={histQuery} onChange={(e) => setHistQuery(e.target.value)} placeholder="Search period / zone…" className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1 w-56" />
+          <select value={histHorizon} onChange={(e) => setHistHorizon(e.target.value)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
+            <option value="">Monthly & weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="weekly">Weekly</option>
+          </select>
+          {histZones.length > 1 && (
+            <select value={histZone} onChange={(e) => setHistZone(e.target.value)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
+              <option value="">All zones</option>
+              {histZones.map((z) => (
+                <option key={z} value={z}>
+                  {z}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="text-ops-muted ml-auto">{groups.length} periods</span>
+        </div>
         <div className="space-y-1.5">
           {groups.length === 0 && <p className="text-xs text-ops-muted p-4 border border-ops-border">No history yet.</p>}
           {groups.map(([key, es]) => (

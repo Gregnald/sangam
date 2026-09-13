@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { MonthPlanCard } from "../MonthPlanCard";
+import { MonthFromWeeklyCard, MonthPlanCard } from "../MonthPlanCard";
 import { WeeklyPlanRow } from "../WeeklyPlanRow";
 import { useAppStore } from "../../store/appStore";
-import { planPeriodLabel, planTimeState } from "../../lib/dates";
+import { monthLabel, planPeriodLabel, planTimeState } from "../../lib/dates";
 import type { BlockPlan } from "../../types/api";
 
 /**
@@ -13,7 +13,7 @@ import type { BlockPlan } from "../../types/api";
  */
 export function DeptPlanView() {
   const { zones, selectedZone, setSelectedZone, plans, fetchPlans, fetchZones } = useAppStore();
-  const [monthId, setMonthId] = useState<string | null>(null);
+  const [monthPeriod, setMonthPeriod] = useState<string>("");
   const [weekId, setWeekId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,18 +27,31 @@ export function DeptPlanView() {
   );
   const monthly = approved.filter((p) => p.horizonType === "monthly");
   const weekly = approved.filter((p) => p.horizonType === "weekly");
-  const currentMonth = monthly.find((p) => planTimeState(p.horizonStart, p.horizonEnd) === "current") ?? null;
   const currentWeek = weekly.find((p) => planTimeState(p.horizonStart, p.horizonEnd) === "current") ?? null;
+  // Months on offer: this month, plus any month a monthly or weekly plan of this zone touches.
+  const now = new Date();
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const months = useMemo(() => {
+    const set = new Set<string>([thisMonth]);
+    for (const p of monthly) set.add(p.periodLabel);
+    for (const p of weekly) {
+      set.add(p.horizonStart.slice(0, 7));
+      set.add(p.horizonEnd.slice(0, 7));
+    }
+    return [...set].sort().reverse();
+  }, [monthly, weekly, thisMonth]);
 
-  // Default to whatever covers today; reset when the zone changes.
+  // Default to this month (whether or not a plan exists) and this week; reset when the zone changes.
   useEffect(() => {
-    setMonthId(currentMonth?.planId ?? monthly[0]?.planId ?? null);
+    setMonthPeriod(thisMonth);
     setWeekId(currentWeek?.planId ?? weekly[0]?.planId ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedZone, plans.length]);
 
-  const month = monthly.find((p) => p.planId === monthId) ?? null;
+  const month = monthly.find((p) => p.periodLabel === monthPeriod) ?? null;
+  const weeklyInMonth = weekly.filter((p) => p.horizonStart.slice(0, 7) === monthPeriod || p.horizonEnd.slice(0, 7) === monthPeriod);
   const week = weekly.find((p) => p.planId === weekId) ?? null;
+  const monthState = monthPeriod === thisMonth ? "current" : monthPeriod < thisMonth ? "past" : "upcoming";
 
   const label = (p: BlockPlan) => {
     const state = planTimeState(p.horizonStart, p.horizonEnd);
@@ -59,14 +72,19 @@ export function DeptPlanView() {
           </select>
         </label>
         <label className="flex items-center gap-2 text-ops-muted">
-          Monthly plan
-          <select value={monthId ?? ""} onChange={(e) => setMonthId(e.target.value || null)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
-            {monthly.length === 0 && <option value="">No approved monthly plan for {selectedZone}</option>}
-            {monthly.map((p) => (
-              <option key={p.planId} value={p.planId}>
-                {label(p)}
-              </option>
-            ))}
+          Month
+          <select value={monthPeriod} onChange={(e) => setMonthPeriod(e.target.value)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
+            {months.map((m) => {
+              const has = monthly.some((p) => p.periodLabel === m);
+              const wk = weekly.filter((p) => p.horizonStart.slice(0, 7) === m || p.horizonEnd.slice(0, 7) === m).length;
+              return (
+                <option key={m} value={m}>
+                  {monthLabel(m)}
+                  {m === thisMonth ? " (current)" : ""}
+                  {has ? " — monthly plan" : wk ? ` — ${wk} weekly plan${wk === 1 ? "" : "s"} only` : " — no plan"}
+                </option>
+              );
+            })}
           </select>
         </label>
         <label className="flex items-center gap-2 text-ops-muted">
@@ -84,13 +102,17 @@ export function DeptPlanView() {
 
       <div>
         <h3 className="text-xs font-semibold text-ops-text mb-2">
-          Monthly plan {month ? `— ${planPeriodLabel(month)}` : ""}
-          {month && planTimeState(month.horizonStart, month.horizonEnd) === "current" && <span className="ml-2 text-[10px] text-emerald-400 font-semibold">CURRENT MONTH</span>}
+          Monthly plan — {monthLabel(monthPeriod)}
+          {monthState === "current" && <span className="ml-2 text-[10px] text-emerald-400 font-semibold">CURRENT MONTH</span>}
         </h3>
         {month ? (
-          <MonthPlanCard plan={month} weeklyPlans={weekly} activeLabel={planTimeState(month.horizonStart, month.horizonEnd) === "current"} />
+          <MonthPlanCard plan={month} weeklyPlans={weekly} activeLabel={monthState === "current"} />
+        ) : weeklyInMonth.length > 0 ? (
+          <MonthFromWeeklyCard period={monthPeriod} zone={selectedZone} weeklyPlans={weekly} />
         ) : (
-          <p className="text-xs text-ops-muted p-4 border border-ops-border">No approved monthly plan for {selectedZone}.</p>
+          <p className="text-xs text-ops-muted p-4 border border-ops-border">
+            No plan for {selectedZone} in {monthLabel(monthPeriod)} yet — the controller has not generated one for this zone.
+          </p>
         )}
       </div>
 

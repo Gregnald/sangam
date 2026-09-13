@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { CorridorGantt } from "./CorridorGantt";
 import { fmtDate, mondayOf, IST_TZ } from "../lib/dates";
-import type { ModificationRequest } from "../types/api";
+import type { ModificationRequest, ModificationType } from "../types/api";
 
 const TYPE_LABEL: Record<string, string> = { reschedule: "Reschedule offer", preemption: "Priority bump request" };
 
@@ -40,14 +40,83 @@ export function ModificationList({
   const [busy, setBusy] = useState<string | null>(null);
   const [reasonById, setReasonById] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [type, setType] = useState<"" | ModificationType>("");
+  const [status, setStatus] = useState("");
+  const [dept, setDept] = useState("");
+
+  const depts = useMemo(() => [...new Set(items.map((m) => m.requestingDepartment))].sort(), [items]);
+  const statuses = useMemo(() => [...new Set(items.map((m) => m.status))].sort(), [items]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return items.filter((m) => {
+      if (type && m.requestType !== type) return false;
+      if (status && m.status !== status) return false;
+      if (dept && m.requestingDepartment !== dept) return false;
+      if (q) {
+        const hay = [m.proposedCorridorId, m.requestingDepartment, m.affectedDepartment, m.defectType?.replace(/_/g, " "), m.description, m.defectId, m.requestId, m.decidedBy, m.decisionReason]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [items, query, type, status, dept]);
 
   if (items.length === 0) {
     return <p className="text-xs text-ops-muted p-4 border border-ops-border">Nothing here right now.</p>;
   }
+  const anyFilter = query || type || status || dept;
 
   return (
     <div className="space-y-2">
-      {items.map((m) => {
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search corridor, type, description, id…" className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1 w-72" />
+        <select value={type} onChange={(e) => setType(e.target.value as "" | ModificationType)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
+          <option value="">All types</option>
+          <option value="reschedule">Reschedule offers</option>
+          <option value="preemption">Priority bumps</option>
+        </select>
+        {statuses.length > 1 && (
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
+            <option value="">All statuses</option>
+            {statuses.map((s) => (
+              <option key={s} value={s}>
+                {s.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+        )}
+        {depts.length > 1 && (
+          <select value={dept} onChange={(e) => setDept(e.target.value)} className="bg-ops-inset border border-ops-border text-ops-text px-2 py-1">
+            <option value="">All departments</option>
+            {depts.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        )}
+        {anyFilter && (
+          <button
+            onClick={() => {
+              setQuery("");
+              setType("");
+              setStatus("");
+              setDept("");
+            }}
+            className="text-ops-accent underline"
+          >
+            clear
+          </button>
+        )}
+        <span className="text-ops-muted ml-auto">
+          {filtered.length} of {items.length}
+        </span>
+      </div>
+      {filtered.length === 0 && <p className="text-xs text-ops-muted p-4 border border-ops-border">Nothing matches these filters.</p>}
+      {filtered.map((m) => {
         const canExpand = Boolean(m.proposedCorridorId && m.proposedWindowStart);
         const isOpen = expanded === m.requestId;
         const weekStart = m.proposedWindowStart ? mondayOf(new Date(m.proposedWindowStart)) : null;

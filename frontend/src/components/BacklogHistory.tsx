@@ -1,6 +1,7 @@
 import { IST_TZ } from "../lib/dates";
 import { useEffect, useMemo, useState } from "react";
 import { api, qs } from "../lib/api";
+import { useAppStore } from "../store/appStore";
 import { EVENT_LABEL } from "../lib/requestStatus";
 import type { DefectEvent } from "../types/api";
 
@@ -22,6 +23,7 @@ const EVENT_TONE: Record<string, string> = {
 
 export function BacklogHistory({ scope }: { scope: "own" | "all" }) {
   const [events, setEvents] = useState<DefectEvent[]>([]);
+  const planRevision = useAppStore((s) => s.planRevision);
   const [loading, setLoading] = useState(true);
   const [type, setType] = useState("");
   const [dept, setDept] = useState("");
@@ -37,7 +39,7 @@ export function BacklogHistory({ scope }: { scope: "own" | "all" }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [planRevision]);
 
   const types = useMemo(() => [...new Set(events.map((e) => e.eventType))].sort(), [events]);
   const depts = useMemo(() => [...new Set(events.map((e) => e.department))].sort(), [events]);

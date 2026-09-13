@@ -10,7 +10,7 @@ const ROLE_LABEL: Record<string, string> = { CONTROLLER: "Section Controller", E
 
 export function TopBar({ tabs, active, onTabChange }: { tabs: string[]; active: string; onTabChange: (t: string) => void }) {
   const { displayName, role, logout } = useAuthStore();
-  const { notifications, fetchNotifications, markNotificationRead, markAllNotificationsRead } = useAppStore();
+  const { notifications, fetchNotifications, markNotificationRead, markAllNotificationsRead, focusRequest } = useAppStore();
   const [open, setOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
 
@@ -73,11 +73,21 @@ export function TopBar({ tabs, active, onTabChange }: { tabs: string[]; active: 
               {notifications.map((n) => (
                 <div
                   key={n.notificationId}
-                  onClick={() => !n.isRead && markNotificationRead(n.notificationId)}
-                  className={`px-3 py-2 text-xs border-b border-ops-border last:border-0 cursor-pointer ${n.isRead ? "text-ops-muted" : "text-ops-text bg-ops-raise"}`}
+                  onClick={() => {
+                    if (!n.isRead) markNotificationRead(n.notificationId);
+                    if (n.relatedDefectId) {
+                      focusRequest(n.relatedDefectId);
+                      setOpen(false);
+                    }
+                  }}
+                  className={`px-3 py-2 text-xs border-b border-ops-border last:border-0 cursor-pointer hover:bg-ops-hover ${n.isRead ? "text-ops-muted" : "text-ops-text bg-ops-raise"}`}
+                  title={n.relatedDefectId ? "Open this request" : undefined}
                 >
                   {n.message}
-                  <div className="text-[10px] text-ops-muted mt-1">{new Date(n.createdAt).toLocaleString(undefined, { timeZone: IST_TZ })}</div>
+                  <div className="flex items-center justify-between text-[10px] text-ops-muted mt-1">
+                    <span>{new Date(n.createdAt).toLocaleString(undefined, { timeZone: IST_TZ })}</span>
+                    {n.relatedDefectId && <span className="text-ops-accent">open request →</span>}
+                  </div>
                 </div>
               ))}
             </div>

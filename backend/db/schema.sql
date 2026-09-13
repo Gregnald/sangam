@@ -183,6 +183,10 @@ CREATE TABLE IF NOT EXISTS core.defects (
 -- week by the clock sweep (workflow/engine.py::reschedule_overdue); cleared
 -- whenever the request returns to the backlog.
 ALTER TABLE core.defects ADD COLUMN IF NOT EXISTS rescheduled_at TIMESTAMPTZ;
+-- The fault is severe enough that trains cannot run through its repair
+-- block: timetabled trains overlapping the block are cancelled or postponed
+-- (drawn greyed out on the Gantt) and the job takes the safety floor.
+ALTER TABLE core.defects ADD COLUMN IF NOT EXISTS traffic_suspended BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_defects_status_sev ON core.defects (workflow_status, severity_code);
 CREATE INDEX IF NOT EXISTS idx_defects_corridor ON core.defects (corridor_id);
 CREATE INDEX IF NOT EXISTS idx_defects_department ON core.defects (department);
@@ -277,6 +281,8 @@ CREATE TABLE IF NOT EXISTS plan.notifications (
     is_read              BOOLEAN NOT NULL DEFAULT FALSE,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- The request a notification is about, so it can open that request in the UI.
+ALTER TABLE plan.notifications ADD COLUMN IF NOT EXISTS related_defect_id UUID;
 CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON plan.notifications (recipient_role, is_read);
 
 CREATE TABLE IF NOT EXISTS plan.plan_history (

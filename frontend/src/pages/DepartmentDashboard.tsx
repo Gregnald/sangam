@@ -32,6 +32,12 @@ export function DepartmentDashboard() {
 
   const pendingForDept = modifications.filter((m) => m.status === "pending_dept" || m.status === "pending_controller");
 
+  // A notification that names a request opens it in My Blocks.
+  const focusRequestId = useAppStore((s) => s.focusRequestId);
+  useEffect(() => {
+    if (focusRequestId) setTab("My Blocks");
+  }, [focusRequestId]);
+
   return (
     <div className="flex flex-col h-screen bg-ops-bg">
       <TopBar tabs={TABS} active={tab} onTabChange={setTab} />

@@ -5,6 +5,7 @@ import { DepartmentDashboard } from "./pages/DepartmentDashboard";
 import { ControllerDashboard } from "./pages/ControllerDashboard";
 import { useAuthStore } from "./store/authStore";
 import { useThemeStore } from "./store/themeStore";
+import { connectLive, disconnectLive } from "./lib/live";
 
 function Home() {
   const role = useAuthStore((s) => s.role);
@@ -20,12 +21,21 @@ function RequireAuth({ children }: { children: React.ReactElement }) {
 
 function App() {
   const restore = useAuthStore((s) => s.restore);
+  const token = useAuthStore((s) => s.token);
   const initTheme = useThemeStore((s) => s.init);
 
   useEffect(() => {
     initTheme();
     restore();
   }, [initTheme, restore]);
+
+  // Live updates for the whole session: anything that changes on the
+  // server shows up here without a refresh.
+  useEffect(() => {
+    if (!token) return;
+    connectLive(token);
+    return () => disconnectLive();
+  }, [token]);
 
   return (
     <Router>
