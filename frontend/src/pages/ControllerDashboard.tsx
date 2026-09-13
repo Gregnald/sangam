@@ -16,15 +16,17 @@ const TABS = ["Backlog", "Approvals", "Plans", "Analytics", "Compatibility", "In
 export function ControllerDashboard() {
   const [tab, setTab] = useState("Backlog");
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
+  const [busyApproval, setBusyApproval] = useState<string | null>(null);
   const [planZone, setPlanZone] = useState<string | null>(null);
   const [monthsAhead, setMonthsAhead] = useState<0 | 1 | 2>(1);
   const [bulkBusy, setBulkBusy] = useState<"weekly" | "monthly" | null>(null);
   const [bulkResults, setBulkResults] = useState<{ kind: "weekly" | "monthly"; results: BulkPlanResult[] } | null>(null);
+  const [approvalReasons, setApprovalReasons] = useState<Record<string, string>>({});
 
   const {
     zones, selectedZone, requests, modifications, plans, resetEpoch,
     fetchZones, fetchRequests, fetchModifications, fetchPlans,
-    decideModification, generateMonthlyPlan, generateWeeklyPlan,
+    decideModification, approveRequest, generateMonthlyPlan, generateWeeklyPlan,
     approvePlan, rejectPlan, generateAndApproveAllMonthly, generateAndApproveAllWeekly,
   } = useAppStore();
 
@@ -52,6 +54,7 @@ export function ControllerDashboard() {
     if (focusRequestId) setTab("Backlog");
   }, [focusRequestId]);
 
+  const pendingApprovals = requests.filter((r) => r.workflowStatus === "pending_approval");
   const pendingControllerMods = modifications.filter((m) => m.status === "pending_controller" || m.status === "pending_dept");
   const isLiveOrPending = (p: (typeof plans)[number]) =>
     p.status === "pending_approval" || (p.status === "approved" && planTimeState(p.horizonStart, p.horizonEnd) !== "past");
@@ -100,6 +103,16 @@ export function ControllerDashboard() {
     }
   }
 
+  async function handleApproveRequest(defectId: string, approve: boolean) {
+    setBusyApproval(defectId);
+    try {
+      await approveRequest(defectId, approve, approvalReasons[defectId] || undefined);
+      setApprovalReasons({ ...approvalReasons, [defectId]: "" });
+    } finally {
+      setBusyApproval(null);
+    }
+  }
+
   async function handleGenerateApproveAllMonthly() {
     setBulkBusy("monthly");
     setBulkResults(null);
@@ -136,9 +149,58 @@ export function ControllerDashboard() {
         )}
 
         {tab === "Approvals" && (
-          <div>
-            <h2 className="text-sm font-semibold text-ops-text mb-3">Modification Requests</h2>
-            <ModificationList items={pendingControllerMods} mode="controller" onControllerDecide={(id, approve, reason) => decideModification(id, approve, reason)} />
+          <div className="space-y-6">
+            {/* PENDING REQUEST APPROVALS - NEW FEATURE */}
+            {pendingApprovals.length > 0 && (
+              <div className="border border-ops-border p-4 rounded">
+                <h2 className="text-sm font-semibold text-ops-text mb-3">Pending Request Approvals</h2>
+                <div className="space-y-2">
+                  {pendingApprovals.map((req) => (
+                    <div key={req.defectId} className="border border-ops-border p-3 rounded bg-ops-inset">
+                      <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-ops-text">
+                            {req.corridorId} · {req.defectType?.replace(/_/g, " ")} · Sev {req.severityCode}
+                          </p>
+                          <p className="text-xs text-ops-muted mt-1">
+                            {req.estimatedBlockHours.toFixed(2)} hours · Due {req.dueDate}
+                          </p>
+                        </div>
+                        <div className="flex gap-2 flex-shrink-0">
+                          <button
+                            disabled={busyApproval === req.defectId}
+                            onClick={() => handleApproveRequest(req.defectId, true)}
+                            className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium disabled:opacity-50"
+                          >
+                            {busyApproval === req.defectId ? "…" : "✓ Approve"}
+                          </button>
+                          <button
+                            disabled={busyApproval === req.defectId}
+                            onClick={() => handleApproveRequest(req.defectId, false)}
+                            className="px-3 py-1.5 bg-red-600 text-white text-xs font-medium disabled:opacity-50"
+                          >
+                            {busyApproval === req.defectId ? "…" : "✕ Reject"}
+                          </button>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="Optional reason…"
+                        value={approvalReasons[req.defectId] || ""}
+                        onChange={(e) => setApprovalReasons({ ...approvalReasons, [req.defectId]: e.target.value })}
+                        className="w-full text-xs bg-ops-panel border border-ops-border text-ops-text px-2 py-1 rounded"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* MODIFICATION REQUESTS (Reschedules & Bumps) */}
+            <div>
+              <h2 className="text-sm font-semibold text-ops-text mb-3">Reschedules & Bumps</h2>
+              <ModificationList items={pendingControllerMods} mode="controller" onControllerDecide={(id, approve, reason) => decideModification(id, approve, reason)} />
+            </div>
           </div>
         )}
 

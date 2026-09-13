@@ -262,7 +262,76 @@ OUTCOME_TEXT = {
     "preemption_pending": "it outranks a scheduled block — a bump request is waiting for you",
     "pending": "no slot fits yet; it stays in the backlog and the daily sweep keeps trying",
     "skipped": "not scored yet",
+    "pending_approval": "awaiting controller approval",
 }
+
+
+class ApprovalDecisionBody(BaseModel):
+    model_config = CamelModel
+    approve: bool
+    reason: str | None = None
+
+
+@router.post("/{defect_id}/approve-request")
+def approve_request(
+    defect_id: str,
+    body: ApprovalDecisionBody,
+    user: CurrentUser = Depends(require_role("CONTROLLER")),
+    db: Session = Depends(get_db),
+):
+    """Controller approves or rejects a pending_approval request.
+
+    If approve: Mark as scheduled (was in pending_approval)
+    If reject: Return to pending backlog
+    """
+    row = db.execute(
+        text("SELECT department, workflow_status, corridor_id, defect_type FROM core.defects WHERE defect_id = :id"),
+        {"id": defect_id},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(404, "request not found")
+    if row["workflow_status"] != "pending_approval":
+        raise HTTPException(400, f"request is {row['workflow_status']}, not pending approval")
+
+    reason_text = body.reason or ("approved" if body.approve else "rejected")
+
+    if body.approve:
+        # Mark as scheduled — the tentative block assignment is now live
+        db.execute(
+            text("UPDATE core.defects SET workflow_status = 'scheduled', updated_at = now() WHERE defect_id = :id"),
+            {"id": defect_id},
+        )
+        from workflow.events import log_event
+        log_event(db, defect_id, "approved", "pending_approval", "scheduled", user.username, f"controller approved the request{f' — {reason_text}' if body.reason else ''}")
+        work = (row["defect_type"] or "").replace("_", " ")
+        db.execute(
+            text("INSERT INTO plan.notifications (recipient_role, message, related_defect_id) VALUES (:role, :msg, :d)"),
+            {"role": row["department"], "msg": f"Approved: {work} on {row['corridor_id']} (#{defect_id[:8].upper()}) has been approved and is now scheduled." + (f" Note: {reason_text}" if body.reason else ""), "d": defect_id},
+        )
+    else:
+        # Reject: remove the block assignment and return request to backlog
+        db.execute(
+            text("""
+                DELETE FROM plan.block_assignments a USING plan.block_plans p
+                WHERE p.plan_id = a.plan_id AND a.defect_id = :id
+                AND p.status IN ('approved', 'pending_approval')
+            """),
+            {"id": defect_id},
+        )
+        db.execute(
+            text("UPDATE core.defects SET workflow_status = 'pending', updated_at = now() WHERE defect_id = :id"),
+            {"id": defect_id},
+        )
+        from workflow.events import log_event
+        log_event(db, defect_id, "rejected", "pending_approval", "pending", user.username, f"controller rejected the request{f' — {reason_text}' if body.reason else ''}")
+        work = (row["defect_type"] or "").replace("_", " ")
+        db.execute(
+            text("INSERT INTO plan.notifications (recipient_role, message, related_defect_id) VALUES (:role, :msg, :d)"),
+            {"role": row["department"], "msg": f"Rejected: {work} on {row['corridor_id']} (#{defect_id[:8].upper()}) request was not approved." + (f" Reason: {reason_text}" if body.reason else "") + " It is back in the backlog.", "d": defect_id},
+        )
+
+    db.commit()
+    return {"ok": True, "action": "approved" if body.approve else "rejected"}
 
 
 @router.post("/reschedule/{request_id}/respond")

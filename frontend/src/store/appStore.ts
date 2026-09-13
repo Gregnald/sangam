@@ -55,6 +55,7 @@ interface AppState {
   }) => Promise<{ defectId: string; outcome: string }>;
   respondToReschedule: (requestId: string, accept: boolean) => Promise<void>;
   decideModification: (requestId: string, approve: boolean, reason?: string) => Promise<void>;
+  approveRequest: (defectId: string, approve: boolean, reason?: string) => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   clearRequest: (defectId: string) => Promise<void>;
@@ -175,6 +176,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearRequest: async (defectId) => {
     await api.post(`/api/v1/requests/${defectId}/clear`);
     await get().fetchRequests();
+  },
+
+  approveRequest: async (defectId, approve, reason) => {
+    await api.post(`/api/v1/requests/${defectId}/approve-request`, { approve, reason });
+    await Promise.all([get().fetchRequests(), get().fetchPlans()]);
   },
 
   generateMonthlyPlan: async (zone, monthsAhead = 1) => {

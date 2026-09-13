@@ -333,25 +333,33 @@ def _place(conn, defect_id: str, department: str, corridor_id: str, zone: str | 
         allocated_start = direct_fit["window_start"] + timedelta(hours=hours_by_dept.get(department, 0.0))
         allocated_end = allocated_start + timedelta(hours=duration_hours)
         group_id = _join_possession(conn, active_plan["plan_id"], str(direct_fit["window_id"]), group_id)
-        conn.execute(
+
+        # REQUIREMENT: ALL requests need controller approval, even if they fit perfectly.
+        # Create tentative assignment marked for approval.
+        assignment_id = conn.execute(
             text(
                 """
                 INSERT INTO plan.block_assignments (plan_id, window_id, corridor_id, defect_id, department, allocated_start, allocated_end, joint_block_group_id)
                 VALUES (:plan, :win, :corridor, :defect, :dept, :start, :end, :group)
+                RETURNING assignment_id
                 """
             ),
             {"plan": active_plan["plan_id"], "win": str(direct_fit["window_id"]), "corridor": corridor_id, "defect": defect_id, "dept": department, "start": allocated_start, "end": allocated_end, "group": group_id},
-        )
-        conn.execute(text("UPDATE core.defects SET workflow_status = 'scheduled', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
-        log_event(conn, defect_id, "scheduled", "pending", "scheduled", "system", f"auto-placed {allocated_start:%Y-%m-%d %H:%M}–{allocated_end:%H:%M} on {corridor_id} ({active_plan['horizon_type']} plan {active_plan['period_label']})" + (" (joined an existing possession)" if group_id else ""))
+        ).scalar()
+
+        # Mark request as pending controller approval (not yet scheduled)
+        conn.execute(text("UPDATE core.defects SET workflow_status = 'pending_approval', updated_at = now() WHERE defect_id = :id"), {"id": defect_id})
+        log_event(conn, defect_id, "pending_approval", "pending", "pending_approval", "system", f"proposed for {allocated_start:%Y-%m-%d %H:%M}–{allocated_end:%H:%M} on {corridor_id} ({active_plan['horizon_type']} plan {active_plan['period_label']}) — awaiting controller approval" + (" (would join an existing possession)" if group_id else ""))
+
         work = (defect_type or "").replace("_", " ")
         slot = f"{allocated_start:%a %d %b %H:%M}–{allocated_end:%H:%M}"
-        _notify(conn, department, f"Scheduled: {work} on {corridor_id} ({_short(defect_id)}) → {slot}" + (" in a shared possession" if group_id else "") + f" ({active_plan['horizon_type']} plan {active_plan['period_label']}).", defect_id=defect_id)
-        _notify(conn, "CONTROLLER", f"{department} {work} on {corridor_id} ({_short(defect_id)}) scheduled {slot}" + (" — joined an existing possession" if group_id else "") + ".", defect_id=defect_id)
+        _notify(conn, department, f"Approval pending: {work} on {corridor_id} ({_short(defect_id)}) proposed for {slot}" + (" in a shared possession" if group_id else "") + f" ({active_plan['horizon_type']} plan {active_plan['period_label']}). Awaiting controller review.", defect_id=defect_id)
+        _notify(conn, "CONTROLLER", f"{department} {work} on {corridor_id} ({_short(defect_id)}) proposed {slot}" + (" — would join an existing possession" if group_id else "") + ". Check Approvals tab to review and approve/reject.", defect_id=defect_id)
+
         if created_plan:
             _snapshot(conn, str(active_plan["plan_id"]), "weekly", active_plan["period_label"], "proposed")
             _snapshot(conn, str(active_plan["plan_id"]), "weekly", active_plan["period_label"], "final")
-        return "scheduled"
+        return "pending_approval"
 
     preemption_target = conn.execute(
         text(

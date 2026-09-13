@@ -8,6 +8,7 @@ import type { DefectRequest } from "../types/api";
 export type DisplayStatus =
   | "requested"
   | "overdue"
+  | "awaiting_approval"
   | "awaiting_response"
   | "awaiting_controller"
   | "upcoming"
@@ -18,6 +19,7 @@ export type DisplayStatus =
 export const DISPLAY_LABEL: Record<DisplayStatus, string> = {
   requested: "Requested",
   overdue: "Overdue — not yet placed",
+  awaiting_approval: "Awaiting controller approval",
   awaiting_response: "Reschedule offered — respond",
   awaiting_controller: "Awaiting controller",
   upcoming: "Scheduled",
@@ -29,6 +31,7 @@ export const DISPLAY_LABEL: Record<DisplayStatus, string> = {
 export const DISPLAY_COLOR: Record<DisplayStatus, string> = {
   requested: "text-amber-400",
   overdue: "text-red-400",
+  awaiting_approval: "text-yellow-400",
   awaiting_response: "text-blue-400",
   awaiting_controller: "text-blue-400",
   upcoming: "text-emerald-400",
@@ -37,11 +40,12 @@ export const DISPLAY_COLOR: Record<DisplayStatus, string> = {
   cleared: "text-ops-muted",
 };
 
-export const DISPLAY_ORDER: DisplayStatus[] = ["in_progress", "upcoming", "awaiting_response", "awaiting_controller", "overdue", "requested", "completed", "cleared"];
+export const DISPLAY_ORDER: DisplayStatus[] = ["in_progress", "upcoming", "awaiting_approval", "awaiting_response", "awaiting_controller", "overdue", "requested", "completed", "cleared"];
 
 export function displayStatus(r: DefectRequest): DisplayStatus {
   if (r.workflowStatus === "cleared") return "cleared";
   if (r.workflowStatus === "completed" || r.executionState === "completed") return "completed";
+  if (r.workflowStatus === "pending_approval") return "awaiting_approval";
   if (r.workflowStatus === "scheduled") return r.executionState === "in_progress" ? "in_progress" : "upcoming";
   if (r.workflowStatus === "awaiting_dept_response") return "awaiting_response";
   if (r.workflowStatus === "awaiting_controller") return "awaiting_controller";
@@ -51,6 +55,9 @@ export function displayStatus(r: DefectRequest): DisplayStatus {
 export const EVENT_LABEL: Record<string, string> = {
   submitted: "Submitted",
   ingested: "Ingested from backlog upload",
+  pending_approval: "Proposed — awaiting controller approval",
+  approved: "Approved by controller",
+  rejected: "Rejected by controller",
   scheduled: "Scheduled",
   plan_scheduled: "Placed by approved plan",
   auto_rescheduled: "Rescheduled (was overdue)",
